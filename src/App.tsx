@@ -1033,7 +1033,7 @@ export default function App() {
   });
   const dragRef = useRef<DragState | null>(null);
   const [document, setDocument] = useState(allStructuresDocument);
-  const [draft, setDraft] = useState(formatDocument(allStructuresDocument));
+  const [draft, setDraft] = useState(() => formatDocument(allStructuresDocument));
   const [error, setError] = useState("");
   const [paused, setPaused] = useState(false);
   const [resetToken, setResetToken] = useState(0);
@@ -1346,7 +1346,6 @@ export default function App() {
               onClick={() => setCodeOpen((open) => !open)}
             >
               <span>Code</span>
-              <span aria-hidden="true">{codeOpen ? "⌄" : "›"}</span>
             </button>
             {codeOpen ? (
               <button type="button" className="text-button" onClick={formatDraft}>Format</button>
@@ -1377,7 +1376,6 @@ export default function App() {
               onClick={() => setSimulationOpen((open) => !open)}
             >
               <span>Simulation</span>
-              <span aria-hidden="true">{simulationOpen ? "⌄" : "›"}</span>
             </button>
             {simulationOpen ? (
               <button

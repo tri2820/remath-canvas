@@ -136,9 +136,13 @@ textarea::-webkit-scrollbar-thumb:hover {
 }
 
 .text-button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
   padding: 0;
   background: transparent;
   border: 0;
+  line-height: 1;
 }
 
 .text-button:hover,
@@ -219,20 +223,29 @@ textarea {
 .section-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  min-height: 20px;
   padding: 0;
   color: #f4f4ec;
   background: transparent;
   border: 0;
   font-size: 12px;
   font-weight: 600;
+  line-height: 1;
 }
 
-.section-toggle span:last-child {
-  color: #929489;
-  font-family: "DM Mono", monospace;
-  font-size: 14px;
-  line-height: 1;
+.section-toggle::after {
+  width: 5px;
+  height: 5px;
+  margin-left: 8px;
+  content: "";
+  border-right: 1.5px solid #929489;
+  border-bottom: 1.5px solid #929489;
+  transform: translateY(-1px) rotate(45deg);
+  transform-origin: center;
+}
+
+.section-toggle[aria-expanded="false"]::after {
+  transform: translate(-1px, 0) rotate(-45deg);
 }
 
 .physics-controls {
