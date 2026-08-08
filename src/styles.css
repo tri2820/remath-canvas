@@ -44,12 +44,50 @@ button {
 .sidebar {
   display: flex;
   min-height: 0;
-  padding: 24px;
+  padding: 24px 0;
   flex-direction: column;
   color: #f4f4ec;
   background: #171814;
   border-right: 1px solid #30312b;
   overflow: auto;
+  color-scheme: dark;
+  scrollbar-color: #46483f transparent;
+  scrollbar-width: thin;
+}
+
+.sidebar::-webkit-scrollbar,
+textarea::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+textarea::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+.sidebar::-webkit-scrollbar-track,
+textarea::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+textarea::-webkit-scrollbar-track {
+  margin-block: 0;
+}
+
+.sidebar::-webkit-scrollbar-thumb,
+textarea::-webkit-scrollbar-thumb {
+  background: #46483f;
+  border-radius: 999px;
+}
+
+textarea::-webkit-scrollbar-thumb {
+  background: #3d3f38;
+}
+
+.sidebar::-webkit-scrollbar-thumb:hover,
+textarea::-webkit-scrollbar-thumb:hover {
+  background: #686b5f;
 }
 
 .sidebar > header {
@@ -57,7 +95,7 @@ button {
   align-items: baseline;
   justify-content: space-between;
   gap: 16px;
-  padding-bottom: 20px;
+  padding: 0 24px 20px;
 }
 
 .sidebar h1 {
@@ -75,7 +113,7 @@ button {
 
 .code-section,
 .physics-section {
-  padding: 18px 0;
+  padding: 18px 24px;
   border-top: 1px solid #34362f;
 }
 
@@ -108,24 +146,37 @@ button {
   color: #c8ff43;
 }
 
-textarea {
+.textarea-shell {
   display: block;
   width: 100%;
-  height: 360px;
+  height: 300px;
   min-height: 180px;
-  padding: 14px;
-  resize: vertical;
-  color: #e8e9de;
+  padding-block: 10px;
   background: #0f100d;
   border: 1px solid #34362f;
   border-radius: 12px;
+  overflow: hidden;
+}
+
+textarea {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 4px 14px;
+  resize: none;
+  color: #e8e9de;
+  background: transparent;
+  border: 0;
   outline: 0;
   font-family: "DM Mono", monospace;
   font-size: 10.5px;
   line-height: 1.55;
+  color-scheme: dark;
+  scrollbar-color: #46483f #0f100d;
+  scrollbar-width: thin;
 }
 
-textarea:focus {
+.textarea-shell:focus-within {
   border-color: #c8ff43;
   box-shadow: 0 0 0 3px rgb(200 255 67 / 12%);
 }
@@ -155,6 +206,110 @@ textarea:focus {
 .physics-section {
   flex: none;
   padding-bottom: 4px;
+}
+
+.physics-section > .section-heading {
+  margin-bottom: 0;
+}
+
+.code-section.is-collapsed > .section-heading {
+  margin-bottom: 0;
+}
+
+.section-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0;
+  color: #f4f4ec;
+  background: transparent;
+  border: 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.section-toggle span:last-child {
+  color: #929489;
+  font-family: "DM Mono", monospace;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.physics-controls {
+  display: grid;
+  gap: 10px;
+  margin-top: 11px;
+  margin-bottom: 14px;
+}
+
+.physics-control {
+  display: grid;
+  gap: 5px;
+}
+
+.physics-control > span {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  color: #b9bbb0;
+  font-size: 10.5px;
+}
+
+.physics-control output {
+  color: #f4f4ec;
+  font-family: "DM Mono", monospace;
+}
+
+.physics-control input[type="range"] {
+  width: 100%;
+  height: 14px;
+  margin: 0;
+  accent-color: #c8ff43;
+  cursor: pointer;
+}
+
+.vector-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #b9bbb0;
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+.vector-toggle input {
+  position: relative;
+  width: 34px;
+  height: 18px;
+  margin: 0;
+  appearance: none;
+  background: #44463e;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.vector-toggle input::after {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 12px;
+  height: 12px;
+  content: "";
+  background: #f4f4ec;
+  border-radius: 50%;
+  transition: transform 120ms ease;
+}
+
+.vector-toggle input:checked {
+  background: #c8ff43;
+}
+
+.vector-toggle input:checked::after {
+  background: #171814;
+  transform: translateX(16px);
 }
 
 .button-row {
@@ -196,14 +351,13 @@ canvas {
 }
 
 button:focus-visible,
-input:focus-visible,
-textarea:focus-visible {
+input:focus-visible {
   outline: 2px solid #c8ff43;
   outline-offset: 2px;
 }
 
 @media (max-height: 760px) {
-  textarea {
-    height: 280px;
+  .textarea-shell {
+    height: 180px;
   }
 }
