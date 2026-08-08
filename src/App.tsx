@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   type Body,
   type ForceBreakdown,
@@ -1325,8 +1325,28 @@ function drawConstraintLinks(
   context.restore();
 }
 
+function InfoTip({ label, children }: { label: string; children: string }) {
+  const tooltipId = useId();
+  return (
+    <span className="info-tip">
+      <button
+        type="button"
+        className="info-tip-button"
+        aria-label={`About ${label}`}
+        aria-describedby={tooltipId}
+      >
+        ?
+      </button>
+      <span id={tooltipId} className="info-tooltip" role="tooltip">
+        {children}
+      </span>
+    </span>
+  );
+}
+
 function PhysicsControl({
   label,
+  help,
   value,
   min,
   max,
@@ -1335,6 +1355,7 @@ function PhysicsControl({
   onChange,
 }: {
   label: string;
+  help: string;
   value: number;
   min: number;
   max: number;
@@ -1343,11 +1364,14 @@ function PhysicsControl({
   onChange: (value: number) => void;
 }) {
   return (
-    <label className="physics-control">
-      <span>
-        <span>{label}</span>
+    <div className="physics-control">
+      <div className="control-row">
+        <span className="control-label">
+          {label}
+          <InfoTip label={label}>{help}</InfoTip>
+        </span>
         <output>{display}</output>
-      </span>
+      </div>
       <input
         aria-label={label}
         type="range"
@@ -1357,7 +1381,7 @@ function PhysicsControl({
         value={value}
         onInput={(event) => onChange(Number(event.currentTarget.value))}
       />
-    </label>
+    </div>
   );
 }
 
@@ -1757,6 +1781,7 @@ export default function App() {
               <div className="physics-controls">
                 <PhysicsControl
                   label="Edge pull"
+                  help="How strongly connected nodes pull toward one another. Higher values tighten graphs faster."
                   value={physics.attraction}
                   min={0}
                   max={80}
@@ -1766,6 +1791,7 @@ export default function App() {
                 />
                 <PhysicsControl
                   label="Node repulsion"
+                  help="How strongly nodes push apart. Higher values spread structures farther open."
                   value={physics.repulsion}
                   min={0}
                   max={500}
@@ -1775,6 +1801,7 @@ export default function App() {
                 />
                 <PhysicsControl
                   label="Edge repulsion"
+                  help="How far duplicate edges bow away from one another. At zero, duplicate edges overlap."
                   value={physics.edgeRepulsion}
                   min={0}
                   max={96}
@@ -1785,6 +1812,7 @@ export default function App() {
                 />
                 <PhysicsControl
                   label="Damping"
+                  help="How quickly motion loses energy. Higher values reduce drifting and settle sooner."
                   value={physics.damping}
                   min={0.5}
                   max={14}
@@ -1792,24 +1820,34 @@ export default function App() {
                   display={physics.damping.toFixed(1)}
                   onChange={(damping) => setPhysics((current) => ({ ...current, damping }))}
                 />
-                <label className="switch-toggle">
-                  <span>Force vectors</span>
+                <div className="switch-toggle">
+                  <span className="control-label">
+                    Force vectors
+                    <InfoTip label="Force vectors">
+                      Shows attraction, repulsion, and net-force arrows for every point.
+                    </InfoTip>
+                  </span>
                   <input
                     aria-label="Force vectors"
                     type="checkbox"
                     checked={showVectors}
                     onChange={(event) => setShowVectors(event.currentTarget.checked)}
                   />
-                </label>
-                <label className="switch-toggle">
-                  <span>Compact points</span>
+                </div>
+                <div className="switch-toggle">
+                  <span className="control-label">
+                    Compact points
+                    <InfoTip label="Compact points">
+                      Switches between small dots with floating labels and large labeled circles.
+                    </InfoTip>
+                  </span>
                   <input
                     aria-label="Compact points"
                     type="checkbox"
                     checked={compactPoints}
                     onChange={(event) => setCompactPoints(event.currentTarget.checked)}
                   />
-                </label>
+                </div>
               </div>
               <div className="button-row">
                 <button type="button" onClick={() => setPaused((current) => !current)}>
