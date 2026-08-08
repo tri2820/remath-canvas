@@ -111,28 +111,35 @@ textarea::-webkit-scrollbar-thumb:hover {
   font-size: 10px;
 }
 
-.code-section,
-.physics-section {
-  padding: 18px 24px;
+.sidebar-section {
+  flex: none;
   border-top: 1px solid #34362f;
 }
 
-.code-section {
-  flex: none;
+.sidebar-section:last-of-type {
+  border-bottom: 1px solid #34362f;
 }
 
 .section-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  min-height: 40px;
+  padding: 0 24px;
   gap: 12px;
-  margin-bottom: 11px;
+  margin: 0;
 }
 
-.section-heading h2 {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 600;
+.section-content {
+  padding: 2px 24px 16px;
+}
+
+.section-content > .physics-controls {
+  margin-top: 0;
+}
+
+.section-content > .physics-controls:last-child {
+  margin-bottom: 0;
 }
 
 .text-button {
@@ -207,21 +214,9 @@ textarea {
   background: #dcff87;
 }
 
-.physics-section {
-  flex: none;
-  padding-bottom: 4px;
-}
-
-.physics-section > .section-heading {
-  margin-bottom: 0;
-}
-
-.code-section.is-collapsed > .section-heading {
-  margin-bottom: 0;
-}
-
 .section-toggle {
   display: inline-flex;
+  flex: 1;
   align-items: center;
   min-height: 20px;
   padding: 0;
@@ -231,6 +226,7 @@ textarea {
   font-size: 12px;
   font-weight: 600;
   line-height: 1;
+  text-align: left;
 }
 
 .section-toggle::after {
@@ -246,6 +242,17 @@ textarea {
 
 .section-toggle[aria-expanded="false"]::after {
   transform: translate(-1px, 0) rotate(-45deg);
+}
+
+.section-toggle:hover,
+.section-toggle:focus-visible {
+  color: #c8ff43;
+  outline: 0;
+}
+
+.section-toggle:hover::after,
+.section-toggle:focus-visible::after {
+  border-color: #c8ff43;
 }
 
 .physics-controls {

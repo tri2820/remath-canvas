@@ -16,6 +16,7 @@ export type PhysicsConstraint = {
   error: (bodies: Map<string, Body>) => number;
   gradient?: (bodies: Map<string, Body>, particleId: string) => Vector;
   stiffness?: number;
+  connects?: boolean;
 };
 
 export type PhysicsAttraction = {
@@ -139,6 +140,7 @@ export function connectedComponents(
     neighbors.get(right)?.add(left);
   };
   constraints.forEach((constraint) => {
+    if (constraint.connects === false) return;
     constraint.particleIds.forEach((left) => {
       constraint.particleIds.forEach((right) => {
         connect(left, right);

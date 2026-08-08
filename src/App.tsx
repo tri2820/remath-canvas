@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   type Body,
   type ForceBreakdown,
@@ -28,7 +28,37 @@ type CircleSpec = {
 type LineSpec = {
   id: string;
   type: "line";
+  name?: string;
   through: [string, string];
+};
+
+type SegmentSpec = {
+  id: string;
+  type: "segment";
+  name?: string;
+  between: [string, string];
+};
+
+type RaySpec = {
+  id: string;
+  type: "ray";
+  name?: string;
+  from: string;
+  through: string;
+};
+
+type AngleSpec = {
+  id: string;
+  type: "angle";
+  name?: string;
+  arms: [string, string, string];
+};
+
+type PolygonSpec = {
+  id: string;
+  type: "polygon";
+  name?: string;
+  vertices: string[];
 };
 
 type GraphEdgeSpec = {
@@ -45,7 +75,7 @@ type GraphSpec = {
   edges: GraphEdgeSpec[];
 };
 
-type ObjectSpec = CircleSpec | LineSpec | GraphSpec;
+type ObjectSpec = CircleSpec | LineSpec | SegmentSpec | RaySpec | AngleSpec | PolygonSpec | GraphSpec;
 
 type OnConstraint = {
   type: "on";
@@ -60,7 +90,18 @@ type DistanceConstraint = {
   value: number;
 };
 
-type ConstraintSpec = OnConstraint | DistanceConstraint;
+type AngleConstraint = {
+  type: "angle";
+  object: string;
+  value: number;
+};
+
+type ObjectRelationConstraint = {
+  type: "parallel" | "perpendicular";
+  objects: [string, string];
+};
+
+type ConstraintSpec = OnConstraint | DistanceConstraint | AngleConstraint | ObjectRelationConstraint;
 
 type GeometryDocument = {
   points: PointSpec[];
@@ -73,6 +114,8 @@ type World = {
   initialized: boolean;
   width: number;
   height: number;
+  screenWidth: number;
+  screenHeight: number;
 };
 
 type DragState = {
@@ -87,6 +130,7 @@ type PhysicsSettings = {
   attraction: number;
   repulsion: number;
   edgeRepulsion: number;
+  extensionLength: number;
   damping: number;
 };
 
@@ -94,6 +138,7 @@ const defaultPhysics: PhysicsSettings = {
   attraction: 30,
   repulsion: 220,
   edgeRepulsion: 32,
+  extensionLength: 72,
   damping: 9.5,
 };
 
@@ -225,14 +270,101 @@ const integratedCircleDocument: GeometryDocument = {
   constraints: [],
 };
 
+const geometryPrimitivesDocument: GeometryDocument = {
+  points: [
+    { id: "line:A", label: "A" },
+    { id: "line:B", label: "B" },
+    { id: "line:P", label: "P" },
+    { id: "parallel:A", label: "C" },
+    { id: "parallel:B", label: "D" },
+    { id: "perpendicular:A", label: "E" },
+    { id: "perpendicular:B", label: "F" },
+    { id: "segment:A", label: "A" },
+    { id: "segment:B", label: "B" },
+    { id: "ray:A", label: "A" },
+    { id: "ray:B", label: "B" },
+    { id: "angle:A", label: "A" },
+    { id: "angle:V", label: "V" },
+    { id: "angle:B", label: "B" },
+    { id: "polygon:A", label: "A" },
+    { id: "polygon:B", label: "B" },
+    { id: "polygon:C", label: "C" },
+    { id: "polygon:D", label: "D" },
+    { id: "polygon:E", label: "E" },
+  ],
+  objects: [
+    { id: "lineAB", type: "line", name: "Line AB", through: ["line:A", "line:B"] },
+    {
+      id: "segmentCD",
+      type: "segment",
+      name: "Segment CD",
+      between: ["parallel:A", "parallel:B"],
+    },
+    {
+      id: "segmentEF",
+      type: "segment",
+      name: "Segment EF",
+      between: ["perpendicular:A", "perpendicular:B"],
+    },
+    { id: "segment", type: "segment", name: "Segment", between: ["segment:A", "segment:B"] },
+    { id: "ray", type: "ray", name: "Ray", from: "ray:A", through: "ray:B" },
+    { id: "angle", type: "angle", name: "Angle", arms: ["angle:A", "angle:V", "angle:B"] },
+    {
+      id: "polygon",
+      type: "polygon",
+      name: "Pentagon",
+      vertices: ["polygon:A", "polygon:B", "polygon:C", "polygon:D", "polygon:E"],
+    },
+  ],
+  constraints: [
+    { type: "on", point: "line:P", object: "lineAB" },
+    { type: "parallel", objects: ["lineAB", "segmentCD"] },
+    { type: "perpendicular", objects: ["lineAB", "segmentEF"] },
+    { type: "angle", object: "angle", value: 60 },
+  ],
+};
+
 const allStructuresDocument: GeometryDocument = {
-  points: [...circleDocument.points, ...integratedCircleDocument.points],
-  objects: [...circleDocument.objects, ...integratedCircleDocument.objects],
-  constraints: [...circleDocument.constraints, ...integratedCircleDocument.constraints],
+  points: [
+    ...circleDocument.points,
+    ...integratedCircleDocument.points,
+    ...geometryPrimitivesDocument.points,
+  ],
+  objects: [
+    ...circleDocument.objects,
+    ...integratedCircleDocument.objects,
+    ...geometryPrimitivesDocument.objects,
+  ],
+  constraints: [
+    ...circleDocument.constraints,
+    ...integratedCircleDocument.constraints,
+    ...geometryPrimitivesDocument.constraints,
+  ],
 };
 
 function formatDocument(document: GeometryDocument) {
   return JSON.stringify(document, null, 2);
+}
+
+function objectPointIds(object: ObjectSpec): string[] {
+  if (object.type === "circle") return [object.center];
+  if (object.type === "line") return object.through;
+  if (object.type === "segment") return object.between;
+  if (object.type === "ray") return [object.from, object.through];
+  if (object.type === "angle") return object.arms;
+  if (object.type === "polygon") return object.vertices;
+  return object.nodes;
+}
+
+function lineEndpoints(object: ObjectSpec): [string, string] | undefined {
+  if (object.type === "line") return object.through;
+  if (object.type === "segment") return object.between;
+  if (object.type === "ray") return [object.from, object.through];
+  return undefined;
+}
+
+function objectName(object: ObjectSpec) {
+  return object.type === "graph" ? object.name : object.name;
 }
 
 function parseDocument(source: string): GeometryDocument {
@@ -294,7 +426,81 @@ function parseDocument(source: string): GeometryDocument {
       ) {
         throw new Error(`Line ${object.id} needs two valid points in "through".`);
       }
-      return { id: object.id, type: "line", through: object.through as [string, string] };
+      return {
+        id: object.id,
+        type: "line",
+        name: typeof object.name === "string" ? object.name : undefined,
+        through: object.through as [string, string],
+      };
+    }
+
+    if (object.type === "segment") {
+      if (
+        !Array.isArray(object.between) ||
+        object.between.length !== 2 ||
+        object.between.some((id) => typeof id !== "string" || !pointIds.has(id))
+      ) {
+        throw new Error(`Segment ${object.id} needs two valid points in "between".`);
+      }
+      return {
+        id: object.id,
+        type: "segment",
+        name: typeof object.name === "string" ? object.name : undefined,
+        between: object.between as [string, string],
+      };
+    }
+
+    if (object.type === "ray") {
+      if (
+        typeof object.from !== "string" ||
+        !pointIds.has(object.from) ||
+        typeof object.through !== "string" ||
+        !pointIds.has(object.through) ||
+        object.from === object.through
+      ) {
+        throw new Error(`Ray ${object.id} needs valid distinct "from" and "through" points.`);
+      }
+      return {
+        id: object.id,
+        type: "ray",
+        name: typeof object.name === "string" ? object.name : undefined,
+        from: object.from,
+        through: object.through,
+      };
+    }
+
+    if (object.type === "angle") {
+      if (
+        !Array.isArray(object.arms) ||
+        object.arms.length !== 3 ||
+        object.arms.some((id) => typeof id !== "string" || !pointIds.has(id)) ||
+        new Set(object.arms).size !== 3
+      ) {
+        throw new Error(`Angle ${object.id} needs three distinct valid points in "arms".`);
+      }
+      return {
+        id: object.id,
+        type: "angle",
+        name: typeof object.name === "string" ? object.name : undefined,
+        arms: object.arms as [string, string, string],
+      };
+    }
+
+    if (object.type === "polygon") {
+      if (
+        !Array.isArray(object.vertices) ||
+        object.vertices.length < 3 ||
+        object.vertices.some((id) => typeof id !== "string" || !pointIds.has(id)) ||
+        new Set(object.vertices).size !== object.vertices.length
+      ) {
+        throw new Error(`Polygon ${object.id} needs at least three distinct valid vertices.`);
+      }
+      return {
+        id: object.id,
+        type: "polygon",
+        name: typeof object.name === "string" ? object.name : undefined,
+        vertices: object.vertices,
+      };
     }
 
     if (object.type === "graph") {
@@ -345,14 +551,17 @@ function parseDocument(source: string): GeometryDocument {
     }
 
     if (constraint.type === "on") {
+      const target = typeof constraint.object === "string"
+        ? objectById.get(constraint.object)
+        : undefined;
       if (
         typeof constraint.point !== "string" ||
         !pointIds.has(constraint.point) ||
         typeof constraint.object !== "string" ||
-        !objectIds.has(constraint.object) ||
-        objectById.get(constraint.object)?.type === "graph"
+        !target ||
+        (target.type !== "circle" && target.type !== "line")
       ) {
-        throw new Error(`Constraint ${index + 1} references a missing point or object.`);
+        throw new Error(`On constraint ${index + 1} needs a point and a circle or line.`);
       }
       return { type: "on", point: constraint.point, object: constraint.object };
     }
@@ -373,6 +582,46 @@ function parseDocument(source: string): GeometryDocument {
         a: constraint.a,
         b: constraint.b,
         value: constraint.value,
+      };
+    }
+
+    if (constraint.type === "angle") {
+      const object = typeof constraint.object === "string"
+        ? objectById.get(constraint.object)
+        : undefined;
+      if (
+        object?.type !== "angle" ||
+        typeof constraint.value !== "number" ||
+        constraint.value <= 0 ||
+        constraint.value >= 180
+      ) {
+        throw new Error(`Angle constraint ${index + 1} needs an angle and value between 0 and 180.`);
+      }
+      return { type: "angle", object: constraint.object, value: constraint.value };
+    }
+
+    if (constraint.type === "parallel" || constraint.type === "perpendicular") {
+      if (
+        !Array.isArray(constraint.objects) ||
+        constraint.objects.length !== 2 ||
+        constraint.objects.some((id) => typeof id !== "string")
+      ) {
+        throw new Error(`${constraint.type} constraint ${index + 1} needs two object ids.`);
+      }
+      const first = objectById.get(constraint.objects[0]);
+      const second = objectById.get(constraint.objects[1]);
+      if (
+        !first ||
+        !second ||
+        first.id === second.id ||
+        !lineEndpoints(first) ||
+        !lineEndpoints(second)
+      ) {
+        throw new Error(`${constraint.type} constraint ${index + 1} needs two line-like objects.`);
+      }
+      return {
+        type: constraint.type,
+        objects: constraint.objects as [string, string],
       };
     }
 
@@ -423,46 +672,76 @@ function resetWorld(world: World, document: GeometryDocument) {
     });
   });
 
-  const graphs = document.objects.filter((object): object is GraphSpec => object.type === "graph");
-  if (graphs.length) {
+  const availablePoints = document.points.filter((point) => !placed.has(point.id));
+  const availableIds = new Set(availablePoints.map((point) => point.id));
+  const parents = new Map(availablePoints.map((point) => [point.id, point.id]));
+  const find = (id: string): string => {
+    const parent = parents.get(id);
+    if (!parent || parent === id) return id;
+    const root = find(parent);
+    parents.set(id, root);
+    return root;
+  };
+  const union = (ids: string[]) => {
+    const members = ids.filter((id) => availableIds.has(id));
+    if (members.length < 2) return;
+    const root = find(members[0]);
+    members.slice(1).forEach((id) => parents.set(find(id), root));
+  };
+
+  document.objects.forEach((object) => {
+    if (object.type !== "circle") union(objectPointIds(object));
+  });
+  const objectById = new Map(document.objects.map((object) => [object.id, object]));
+  document.constraints.forEach((constraint) => {
+    if (constraint.type === "distance") union([constraint.a, constraint.b]);
+    if (constraint.type === "on") {
+      const object = objectById.get(constraint.object);
+      if (object?.type === "line") union([constraint.point, ...object.through]);
+    }
+    if (constraint.type === "parallel" || constraint.type === "perpendicular") {
+      const first = objectById.get(constraint.objects[0]);
+      const second = objectById.get(constraint.objects[1]);
+      if (first && second) union([...objectPointIds(first), ...objectPointIds(second)]);
+    }
+  });
+
+  const groups = new Map<string, PointSpec[]>();
+  availablePoints.forEach((point) => {
+    const root = find(point.id);
+    const group = groups.get(root) ?? [];
+    group.push(point);
+    groups.set(root, group);
+  });
+  const layoutUnits = [...groups.values()];
+  if (layoutUnits.length) {
     const graphHeight = Math.max(1, world.height - graphTop);
     const desiredColumns = Math.max(
       1,
-      Math.min(graphs.length, Math.ceil(Math.sqrt(graphs.length * world.width / graphHeight))),
+      Math.min(
+        layoutUnits.length,
+        Math.ceil(Math.sqrt(layoutUnits.length * world.width / graphHeight)),
+      ),
     );
     const columns = Math.min(
       desiredColumns,
       Math.max(1, Math.floor(world.width / 180)),
     );
-    const rows = Math.ceil(graphs.length / columns);
+    const rows = Math.ceil(layoutUnits.length / columns);
     const cellWidth = world.width / columns;
     const cellHeight = graphHeight / rows;
 
-    graphs.forEach((graph, graphIndex) => {
-      const centerX = (graphIndex % columns + 0.5) * cellWidth;
-      const centerY = graphTop + (Math.floor(graphIndex / columns) + 0.5) * cellHeight;
+    layoutUnits.forEach((points, unitIndex) => {
+      const centerX = (unitIndex % columns + 0.5) * cellWidth;
+      const centerY = graphTop + (Math.floor(unitIndex / columns) + 0.5) * cellHeight;
       const radius = Math.min(70, Math.min(cellWidth, cellHeight) * 0.24);
-      graph.nodes.forEach((id, nodeIndex) => {
-        const point = pointById.get(id);
-        if (!point) return;
-        const angle = -Math.PI / 2 + nodeIndex / Math.max(1, graph.nodes.length) * Math.PI * 2;
-        const offset = graph.nodes.length === 1 ? 0 : radius;
+      points.forEach((point, pointIndex) => {
+        const angle = -Math.PI / 2 + pointIndex / Math.max(1, points.length) * Math.PI * 2;
+        const offset = points.length === 1 ? 0 : radius;
         place(point, centerX + Math.cos(angle) * offset, centerY + Math.sin(angle) * offset);
       });
     });
   }
-
-  const unplaced = document.points.filter((point) => !placed.has(point.id));
-  const layoutRadius = Math.min(world.width, world.height - graphTop) * 0.18;
-  unplaced.forEach((point, index) => {
-    const angle = index / Math.max(1, unplaced.length) * Math.PI * 2;
-    const offset = unplaced.length === 1 ? 0 : layoutRadius;
-    place(
-      point,
-      world.width / 2 + Math.cos(angle) * offset,
-      graphTop + (world.height - graphTop) / 2 + Math.sin(angle) * offset,
-    );
-  });
   world.bodies = bodies;
   world.initialized = true;
 }
@@ -478,7 +757,7 @@ function objectDistance(
     if (!center) return 1;
     return Math.hypot(x - center.x, y - center.y) - object.radius;
   }
-  if (object.type === "graph") return 1;
+  if (object.type !== "line") return 1;
 
   const a = bodies.get(object.through[0]);
   const b = bodies.get(object.through[1]);
@@ -517,6 +796,30 @@ function distanceEquation(
   };
 }
 
+function segmentCrossesLineEquation(
+  line: [string, string],
+  segment: [string, string],
+): PhysicsConstraint {
+  return {
+    particleIds: [...line, ...segment],
+    connects: false,
+    error: (bodies) => {
+      const lineStart = bodies.get(line[0]);
+      const lineEnd = bodies.get(line[1]);
+      const segmentStart = bodies.get(segment[0]);
+      const segmentEnd = bodies.get(segment[1]);
+      if (!lineStart || !lineEnd || !segmentStart || !segmentEnd) return 0;
+      const dx = lineEnd.x - lineStart.x;
+      const dy = lineEnd.y - lineStart.y;
+      const length = Math.max(0.0001, Math.hypot(dx, dy));
+      const signedDistance = (point: Body) =>
+        ((point.x - lineStart.x) * dy - (point.y - lineStart.y) * dx) / length;
+      const product = signedDistance(segmentStart) * signedDistance(segmentEnd);
+      return product > 0 ? Math.sqrt(product) : 0;
+    },
+  };
+}
+
 function compilePhysicsConstraints(document: GeometryDocument): PhysicsConstraint[] {
   const objects = new Map(document.objects.map((object) => [object.id, object]));
   const equations = document.constraints.flatMap((constraint) => {
@@ -524,12 +827,81 @@ function compilePhysicsConstraints(document: GeometryDocument): PhysicsConstrain
       return [distanceEquation(constraint.a, constraint.b, constraint.value)];
     }
 
+    if (constraint.type === "angle") {
+      const object = objects.get(constraint.object);
+      if (object?.type !== "angle") return [];
+      const [firstId, vertexId, secondId] = object.arms;
+      const target = constraint.value * Math.PI / 180;
+      return [{
+        particleIds: object.arms,
+        error: (bodies: Map<string, Body>) => {
+          const first = bodies.get(firstId);
+          const vertex = bodies.get(vertexId);
+          const second = bodies.get(secondId);
+          if (!first || !vertex || !second) return 0;
+          const firstX = first.x - vertex.x;
+          const firstY = first.y - vertex.y;
+          const secondX = second.x - vertex.x;
+          const secondY = second.y - vertex.y;
+          const denominator = Math.max(
+            0.0001,
+            Math.hypot(firstX, firstY) * Math.hypot(secondX, secondY),
+          );
+          const cosine = Math.max(
+            -1,
+            Math.min(1, (firstX * secondX + firstY * secondY) / denominator),
+          );
+          return Math.acos(cosine) - target;
+        },
+      }];
+    }
+
+    if (constraint.type === "parallel" || constraint.type === "perpendicular") {
+      const first = objects.get(constraint.objects[0]);
+      const second = objects.get(constraint.objects[1]);
+      if (!first || !second) return [];
+      const firstEnds = lineEndpoints(first);
+      const secondEnds = lineEndpoints(second);
+      if (!firstEnds || !secondEnds) return [];
+      const orientation: PhysicsConstraint = {
+        particleIds: [...firstEnds, ...secondEnds],
+        connects: false,
+        error: (bodies: Map<string, Body>) => {
+          const firstA = bodies.get(firstEnds[0]);
+          const firstB = bodies.get(firstEnds[1]);
+          const secondA = bodies.get(secondEnds[0]);
+          const secondB = bodies.get(secondEnds[1]);
+          if (!firstA || !firstB || !secondA || !secondB) return 0;
+          const firstX = firstB.x - firstA.x;
+          const firstY = firstB.y - firstA.y;
+          const secondX = secondB.x - secondA.x;
+          const secondY = secondB.y - secondA.y;
+          const denominator = Math.max(
+            0.0001,
+            Math.hypot(firstX, firstY) * Math.hypot(secondX, secondY),
+          );
+          return constraint.type === "parallel"
+            ? (firstX * secondY - firstY * secondX) / denominator
+            : (firstX * secondX + firstY * secondY) / denominator;
+        },
+      };
+      const boundedIntersection = constraint.type !== "perpendicular"
+        ? []
+        : first.type === "line" && second.type === "segment"
+          ? [segmentCrossesLineEquation(firstEnds, secondEnds)]
+          : first.type === "segment" && second.type === "line"
+            ? [segmentCrossesLineEquation(secondEnds, firstEnds)]
+            : [];
+      return [orientation, ...boundedIntersection];
+    }
+
+    if (constraint.type !== "on") return [];
     const object = objects.get(constraint.object);
     if (!object) return [];
     if (object.type === "circle") {
       return [distanceEquation(object.center, constraint.point, object.radius)];
     }
-    if (object.type === "graph") return [];
+    if (object.type !== "line") return [];
 
     const particleIds = [...new Set([constraint.point, ...object.through])];
     return [{
@@ -559,12 +931,29 @@ function compilePhysicsAttractions(
   attractionStrength: number,
 ): PhysicsAttraction[] {
   return document.objects.flatMap((object) => {
-    if (object.type !== "graph") return [];
-    return object.edges.flatMap((edge) =>
-      edge.length === undefined
-        ? [{ a: edge.source, b: edge.target, strength: attractionStrength }]
-        : [],
-    );
+    if (object.type === "graph") {
+      return object.edges.flatMap((edge) =>
+        edge.length === undefined
+          ? [{ a: edge.source, b: edge.target, strength: attractionStrength }]
+          : [],
+      );
+    }
+    const ends = lineEndpoints(object);
+    if (ends) return [{ a: ends[0], b: ends[1], strength: attractionStrength }];
+    if (object.type === "angle") {
+      return [
+        { a: object.arms[1], b: object.arms[0], strength: attractionStrength },
+        { a: object.arms[1], b: object.arms[2], strength: attractionStrength },
+      ];
+    }
+    if (object.type === "polygon") {
+      return object.vertices.map((vertex, index) => ({
+        a: vertex,
+        b: object.vertices[(index + 1) % object.vertices.length],
+        strength: attractionStrength,
+      }));
+    }
+    return [];
   });
 }
 
@@ -713,6 +1102,8 @@ function drawImplicitContour(
   width: number,
   height: number,
   field: (x: number, y: number) => number,
+  strokeStyle = "#171814",
+  lineWidth = 2,
 ) {
   const cell = 8;
   const trace = () => {
@@ -741,8 +1132,8 @@ function drawImplicitContour(
   context.save();
   context.lineCap = "round";
   context.lineJoin = "round";
-  context.strokeStyle = "#171814";
-  context.lineWidth = 2;
+  context.strokeStyle = strokeStyle;
+  context.lineWidth = lineWidth;
   trace();
   context.restore();
 }
@@ -764,10 +1155,454 @@ function drawGrid(context: CanvasRenderingContext2D, width: number, height: numb
   context.restore();
 }
 
+const OPEN_END_MARGIN = 14;
+type CanvasPoint = { x: number; y: number };
+
+function visibleExtensionLength(
+  point: CanvasPoint,
+  directionX: number,
+  directionY: number,
+  width: number,
+  height: number,
+  maximumLength: number,
+) {
+  let available = maximumLength;
+  if (directionX > 0.0001) {
+    available = Math.min(available, (width - OPEN_END_MARGIN - point.x) / directionX);
+  } else if (directionX < -0.0001) {
+    available = Math.min(available, (OPEN_END_MARGIN - point.x) / directionX);
+  }
+  if (directionY > 0.0001) {
+    available = Math.min(available, (height - OPEN_END_MARGIN - point.y) / directionY);
+  } else if (directionY < -0.0001) {
+    available = Math.min(available, (OPEN_END_MARGIN - point.y) / directionY);
+  }
+  return Math.max(0, available);
+}
+
+function openLineGeometry(
+  start: CanvasPoint,
+  end: CanvasPoint,
+  openAtStart: boolean,
+  width: number,
+  height: number,
+  extensionLength: number,
+) {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const length = Math.max(0.0001, Math.hypot(dx, dy));
+  const unitX = dx / length;
+  const unitY = dy / length;
+  const startExtension = openAtStart
+    ? visibleExtensionLength(start, -unitX, -unitY, width, height, extensionLength)
+    : 0;
+  const endExtension = visibleExtensionLength(
+    end,
+    unitX,
+    unitY,
+    width,
+    height,
+    extensionLength,
+  );
+  const renderedStart = {
+    x: start.x - unitX * startExtension,
+    y: start.y - unitY * startExtension,
+  };
+  const renderedEnd = {
+    x: end.x + unitX * endExtension,
+    y: end.y + unitY * endExtension,
+  };
+  const renderedLength = length + startExtension + endExtension;
+  return { renderedStart, renderedEnd, renderedLength, startExtension, length };
+}
+
+function renderOpenLine(
+  context: CanvasRenderingContext2D,
+  start: CanvasPoint,
+  end: CanvasPoint,
+  openAtStart: boolean,
+  width: number,
+  height: number,
+  extensionLength: number,
+) {
+  const {
+    renderedStart,
+    renderedEnd,
+    renderedLength,
+    startExtension,
+    length,
+  } = openLineGeometry(start, end, openAtStart, width, height, extensionLength);
+  const gradient = context.createLinearGradient(
+    renderedStart.x,
+    renderedStart.y,
+    renderedEnd.x,
+    renderedEnd.y,
+  );
+
+  if (openAtStart) {
+    gradient.addColorStop(0, "rgba(23, 24, 20, 0)");
+    gradient.addColorStop(startExtension / renderedLength, "rgba(23, 24, 20, 0.55)");
+  } else {
+    gradient.addColorStop(0, "rgba(23, 24, 20, 0.55)");
+  }
+  gradient.addColorStop(
+    (startExtension + length) / renderedLength,
+    "rgba(23, 24, 20, 0.55)",
+  );
+  gradient.addColorStop(1, "rgba(23, 24, 20, 0)");
+
+  context.save();
+  context.strokeStyle = gradient;
+  context.lineWidth = 1.2;
+  context.beginPath();
+  context.moveTo(renderedStart.x, renderedStart.y);
+  context.lineTo(renderedEnd.x, renderedEnd.y);
+  context.stroke();
+  context.restore();
+}
+
+function supportingLineIntersection(
+  first: { start: CanvasPoint; end: CanvasPoint },
+  second: { start: CanvasPoint; end: CanvasPoint },
+) {
+  const firstDirection = {
+    x: first.end.x - first.start.x,
+    y: first.end.y - first.start.y,
+  };
+  const secondDirection = {
+    x: second.end.x - second.start.x,
+    y: second.end.y - second.start.y,
+  };
+  const denominator = firstDirection.x * secondDirection.y
+    - firstDirection.y * secondDirection.x;
+  if (Math.abs(denominator) < 0.0001) return undefined;
+  const offsetX = second.start.x - first.start.x;
+  const offsetY = second.start.y - first.start.y;
+  const scale = (offsetX * secondDirection.y - offsetY * secondDirection.x) / denominator;
+  return {
+    x: first.start.x + firstDirection.x * scale,
+    y: first.start.y + firstDirection.y * scale,
+  };
+}
+
+function lineVisualEndpoints(
+  line: LineSpec,
+  document: GeometryDocument,
+  bodies: Map<string, Body>,
+) {
+  const start = bodies.get(line.through[0]);
+  const end = bodies.get(line.through[1]);
+  if (!start || !end) return undefined;
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const length = Math.max(0.0001, Math.hypot(dx, dy));
+  const unitX = dx / length;
+  const unitY = dy / length;
+  const anchors: CanvasPoint[] = [start, end];
+  const objects = new Map(document.objects.map((object) => [object.id, object]));
+
+  document.constraints.forEach((constraint) => {
+    if (constraint.type === "on" && constraint.object === line.id) {
+      const point = bodies.get(constraint.point);
+      if (point) anchors.push(point);
+      return;
+    }
+    if (constraint.type !== "perpendicular" || !constraint.objects.includes(line.id)) return;
+    const otherId = constraint.objects[0] === line.id
+      ? constraint.objects[1]
+      : constraint.objects[0];
+    const other = objects.get(otherId);
+    const ends = other ? lineEndpoints(other) : undefined;
+    if (!ends) return;
+    const otherStart = bodies.get(ends[0]);
+    const otherEnd = bodies.get(ends[1]);
+    if (!otherStart || !otherEnd) return;
+    const intersection = supportingLineIntersection(
+      { start, end },
+      { start: otherStart, end: otherEnd },
+    );
+    if (intersection) anchors.push(intersection);
+  });
+
+  const projections = anchors.map(
+    (point) => (point.x - start.x) * unitX + (point.y - start.y) * unitY,
+  );
+  const minimum = Math.min(...projections);
+  const maximum = Math.max(...projections);
+  return {
+    start: { x: start.x + unitX * minimum, y: start.y + unitY * minimum },
+    end: { x: start.x + unitX * maximum, y: start.y + unitY * maximum },
+  };
+}
+
+function primitiveEdgePaths(
+  document: GeometryDocument,
+  bodies: Map<string, Body>,
+  width: number,
+  height: number,
+  extensionLength: number,
+) {
+  const paths: EdgePath[] = [];
+  const add = (sourceId: string, targetId: string) => {
+    const source = bodies.get(sourceId);
+    const target = bodies.get(targetId);
+    if (!source || !target) return;
+    paths.push({ edge: { source: sourceId, target: targetId }, source, target });
+  };
+  document.objects.forEach((object) => {
+    if (object.type === "line") {
+      const visual = lineVisualEndpoints(object, document, bodies);
+      if (!visual) return;
+      const { renderedStart, renderedEnd } = openLineGeometry(
+        visual.start,
+        visual.end,
+        true,
+        width,
+        height,
+        extensionLength,
+      );
+      paths.push({
+        edge: { source: object.through[0], target: object.through[1] },
+        source: renderedStart,
+        target: renderedEnd,
+      });
+    }
+    if (object.type === "segment") add(...object.between);
+    if (object.type === "ray") {
+      const start = bodies.get(object.from);
+      const through = bodies.get(object.through);
+      if (!start || !through) return;
+      const { renderedStart, renderedEnd } = openLineGeometry(
+        start,
+        through,
+        false,
+        width,
+        height,
+        extensionLength,
+      );
+      paths.push({
+        edge: { source: object.from, target: object.through },
+        source: renderedStart,
+        target: renderedEnd,
+      });
+    }
+    if (object.type === "angle") {
+      add(object.arms[1], object.arms[0]);
+      add(object.arms[1], object.arms[2]);
+    }
+    if (object.type === "polygon") {
+      object.vertices.forEach((vertex, index) => {
+        add(vertex, object.vertices[(index + 1) % object.vertices.length]);
+      });
+    }
+  });
+  return paths;
+}
+
+function drawPrimitiveObjects(
+  context: CanvasRenderingContext2D,
+  document: GeometryDocument,
+  bodies: Map<string, Body>,
+  width: number,
+  height: number,
+  extensionLength: number,
+) {
+  const angleValues = new Map(
+    document.constraints.flatMap((constraint) =>
+      constraint.type === "angle" ? [[constraint.object, constraint.value] as const] : []),
+  );
+  context.save();
+  context.strokeStyle = "#171814";
+  context.fillStyle = "#171814";
+  context.lineWidth = 1.8;
+  context.lineCap = "round";
+  context.lineJoin = "round";
+  context.font = "500 9px 'DM Mono', monospace";
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+
+  document.objects.forEach((object) => {
+    if (object.type === "line") {
+      const visual = lineVisualEndpoints(object, document, bodies);
+      if (!visual) return;
+      renderOpenLine(
+        context,
+        visual.start,
+        visual.end,
+        true,
+        width,
+        height,
+        extensionLength,
+      );
+    }
+
+    if (object.type === "segment") {
+      const start = bodies.get(object.between[0]);
+      const end = bodies.get(object.between[1]);
+      if (!start || !end) return;
+      context.beginPath();
+      context.moveTo(start.x, start.y);
+      context.lineTo(end.x, end.y);
+      context.stroke();
+    }
+
+    if (object.type === "ray") {
+      const start = bodies.get(object.from);
+      const through = bodies.get(object.through);
+      if (!start || !through) return;
+      renderOpenLine(context, start, through, false, width, height, extensionLength);
+    }
+
+    if (object.type === "polygon") {
+      const vertices = object.vertices
+        .map((id) => bodies.get(id))
+        .filter((body): body is Body => Boolean(body));
+      if (vertices.length !== object.vertices.length) return;
+      context.beginPath();
+      context.moveTo(vertices[0].x, vertices[0].y);
+      vertices.slice(1).forEach((vertex) => context.lineTo(vertex.x, vertex.y));
+      context.closePath();
+      context.stroke();
+    }
+
+    if (object.type === "angle") {
+      const first = bodies.get(object.arms[0]);
+      const vertex = bodies.get(object.arms[1]);
+      const second = bodies.get(object.arms[2]);
+      if (!first || !vertex || !second) return;
+      context.beginPath();
+      context.moveTo(first.x, first.y);
+      context.lineTo(vertex.x, vertex.y);
+      context.lineTo(second.x, second.y);
+      context.stroke();
+
+      const firstAngle = Math.atan2(first.y - vertex.y, first.x - vertex.x);
+      const secondAngle = Math.atan2(second.y - vertex.y, second.x - vertex.x);
+      let sweep = secondAngle - firstAngle;
+      while (sweep > Math.PI) sweep -= Math.PI * 2;
+      while (sweep < -Math.PI) sweep += Math.PI * 2;
+      const radius = Math.min(
+        24,
+        Math.hypot(first.x - vertex.x, first.y - vertex.y) * 0.35,
+        Math.hypot(second.x - vertex.x, second.y - vertex.y) * 0.35,
+      );
+      context.beginPath();
+      context.arc(vertex.x, vertex.y, radius, firstAngle, firstAngle + sweep, sweep < 0);
+      context.stroke();
+
+      const value = angleValues.get(object.id);
+      if (value !== undefined) {
+        const middle = firstAngle + sweep / 2;
+        context.fillText(
+          `${value}°`,
+          vertex.x + Math.cos(middle) * (radius + 12),
+          vertex.y + Math.sin(middle) * (radius + 12),
+        );
+      }
+    }
+  });
+  context.restore();
+}
+
+function drawRelationMarkers(
+  context: CanvasRenderingContext2D,
+  document: GeometryDocument,
+  bodies: Map<string, Body>,
+) {
+  const objects = new Map(document.objects.map((object) => [object.id, object]));
+  const bodyEnds = (objectId: string) => {
+    const object = objects.get(objectId);
+    const ends = object ? lineEndpoints(object) : undefined;
+    if (!ends) return undefined;
+    const start = bodies.get(ends[0]);
+    const end = bodies.get(ends[1]);
+    return start && end ? { start, end } : undefined;
+  };
+  const direction = ({ start, end }: { start: Body; end: Body }) => {
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const length = Math.max(0.0001, Math.hypot(dx, dy));
+    return { x: dx / length, y: dy / length };
+  };
+
+  context.save();
+  context.strokeStyle = "#55574f";
+  context.lineWidth = 1.3;
+  context.lineCap = "round";
+  context.lineJoin = "round";
+  document.constraints.forEach((constraint) => {
+    if (constraint.type !== "perpendicular") return;
+    const first = bodyEnds(constraint.objects[0]);
+    const second = bodyEnds(constraint.objects[1]);
+    if (!first || !second) return;
+
+    const firstDirection = direction(first);
+    const secondDirection = direction(second);
+    const denominator = firstDirection.x * secondDirection.y
+      - firstDirection.y * secondDirection.x;
+    if (Math.abs(denominator) < 0.0001) return;
+    const offsetX = second.start.x - first.start.x;
+    const offsetY = second.start.y - first.start.y;
+    const scale = (offsetX * secondDirection.y - offsetY * secondDirection.x) / denominator;
+    const intersection = {
+      x: first.start.x + firstDirection.x * scale,
+      y: first.start.y + firstDirection.y * scale,
+    };
+    const inwardDirection = (
+      line: { start: Body; end: Body },
+      objectId: string,
+      fallback: { x: number; y: number },
+    ) => {
+      if (objects.get(objectId)?.type !== "segment") return fallback;
+      const startDistance = Math.hypot(
+        line.start.x - intersection.x,
+        line.start.y - intersection.y,
+      );
+      const endDistance = Math.hypot(
+        line.end.x - intersection.x,
+        line.end.y - intersection.y,
+      );
+      const target = startDistance >= endDistance ? line.start : line.end;
+      const dx = target.x - intersection.x;
+      const dy = target.y - intersection.y;
+      const length = Math.max(0.0001, Math.hypot(dx, dy));
+      return { x: dx / length, y: dy / length };
+    };
+    const firstMarkerDirection = inwardDirection(
+      first,
+      constraint.objects[0],
+      firstDirection,
+    );
+    const secondMarkerDirection = inwardDirection(
+      second,
+      constraint.objects[1],
+      secondDirection,
+    );
+    const size = 9;
+    const firstCorner = {
+      x: intersection.x + firstMarkerDirection.x * size,
+      y: intersection.y + firstMarkerDirection.y * size,
+    };
+    const secondCorner = {
+      x: intersection.x + secondMarkerDirection.x * size,
+      y: intersection.y + secondMarkerDirection.y * size,
+    };
+    context.beginPath();
+    context.moveTo(firstCorner.x, firstCorner.y);
+    context.lineTo(
+      firstCorner.x + secondMarkerDirection.x * size,
+      firstCorner.y + secondMarkerDirection.y * size,
+    );
+    context.lineTo(secondCorner.x, secondCorner.y);
+    context.stroke();
+  });
+  context.restore();
+}
+
 type EdgePath = {
   edge: GraphEdgeSpec;
-  source: Body;
-  target: Body;
+  source: CanvasPoint;
+  target: CanvasPoint;
   control?: { x: number; y: number };
 };
 
@@ -890,6 +1725,95 @@ function pointToEdgeDistance(x: number, y: number, path: EdgePath) {
   return minimum;
 }
 
+function hoveredStructure(
+  document: GeometryDocument,
+  bodies: Map<string, Body>,
+  pointer: CanvasPoint,
+  width: number,
+  height: number,
+  edgeRepulsion: number,
+  extensionLength: number,
+) {
+  const nearPoint = (ids: string[]) => ids.some((id) => {
+    const body = bodies.get(id);
+    return body && Math.hypot(pointer.x - body.x, pointer.y - body.y) <= 10;
+  });
+  const nearPath = (paths: EdgePath[]) =>
+    paths.some((path) => pointToEdgeDistance(pointer.x, pointer.y, path) <= 7);
+
+  return [...document.objects].reverse().find((object) => {
+    if (!objectName(object)) return false;
+    if (nearPoint(objectPointIds(object))) return true;
+
+    if (object.type === "circle") {
+      const center = bodies.get(object.center);
+      return Boolean(
+        center && Math.hypot(pointer.x - center.x, pointer.y - center.y) <= object.radius + 7,
+      );
+    }
+    if (object.type === "graph") {
+      return nearPath(graphEdgePaths(object, bodies, edgeRepulsion));
+    }
+    if (object.type === "line") {
+      const visual = lineVisualEndpoints(object, document, bodies);
+      if (!visual) return false;
+      const { renderedStart, renderedEnd } = openLineGeometry(
+        visual.start,
+        visual.end,
+        true,
+        width,
+        height,
+        extensionLength,
+      );
+      return pointToSegmentDistance(
+        pointer.x,
+        pointer.y,
+        renderedStart,
+        renderedEnd,
+      ) <= 7;
+    }
+    if (object.type === "ray") {
+      const start = bodies.get(object.from);
+      const through = bodies.get(object.through);
+      if (!start || !through) return false;
+      const { renderedStart, renderedEnd } = openLineGeometry(
+        start,
+        through,
+        false,
+        width,
+        height,
+        extensionLength,
+      );
+      return pointToSegmentDistance(
+        pointer.x,
+        pointer.y,
+        renderedStart,
+        renderedEnd,
+      ) <= 7;
+    }
+
+    const paths: EdgePath[] = [];
+    const add = (sourceId: string, targetId: string) => {
+      const source = bodies.get(sourceId);
+      const target = bodies.get(targetId);
+      if (source && target) {
+        paths.push({ edge: { source: sourceId, target: targetId }, source, target });
+      }
+    };
+    if (object.type === "segment") add(...object.between);
+    if (object.type === "angle") {
+      add(object.arms[1], object.arms[0]);
+      add(object.arms[1], object.arms[2]);
+    }
+    if (object.type === "polygon") {
+      object.vertices.forEach((vertex, index) => {
+        add(vertex, object.vertices[(index + 1) % object.vertices.length]);
+      });
+    }
+    return nearPath(paths);
+  })?.id;
+}
+
 function pointToBoxDistance(
   x: number,
   y: number,
@@ -924,11 +1848,11 @@ function edgeToBoxDistance(path: EdgePath, box: LabelPlacement) {
 function layoutStructureLabels(
   context: CanvasRenderingContext2D,
   document: GeometryDocument,
-  graphs: GraphSpec[],
   bodies: Map<string, Body>,
   paths: EdgePath[],
   canvasWidth: number,
   canvasHeight: number,
+  visibleObjectId?: string,
 ) {
   context.save();
   context.font = "600 10px 'DM Mono', monospace";
@@ -940,7 +1864,7 @@ function layoutStructureLabels(
   }> = [];
 
   document.objects.forEach((object) => {
-    if (object.type !== "circle" || !object.name) return;
+    if (object.id !== visibleObjectId || object.type !== "circle" || !object.name) return;
     const center = bodies.get(object.center);
     if (!center) return;
     structures.push({
@@ -955,8 +1879,10 @@ function layoutStructureLabels(
     });
   });
 
-  graphs.forEach((graph) => {
-    const nodes = graph.nodes
+  document.objects.forEach((object) => {
+    const name = objectName(object);
+    if (object.id !== visibleObjectId || object.type === "circle" || !name) return;
+    const nodes = objectPointIds(object)
       .map((id) => bodies.get(id))
       .filter((body): body is Body => Boolean(body));
     if (!nodes.length) return;
@@ -967,8 +1893,8 @@ function layoutStructureLabels(
     const centerX = (minX + maxX) / 2;
     const centerY = (minY + maxY) / 2;
     structures.push({
-      id: graph.id,
-      name: graph.name,
+      id: object.id,
+      name,
       candidates: (halfWidth) => [
         { x: centerX, y: minY - 27 },
         { x: centerX, y: maxY + 27 },
@@ -1029,7 +1955,7 @@ function drawStructureLabels(
   context.textAlign = "center";
   context.textBaseline = "middle";
   document.objects.forEach((object) => {
-    const name = object.type === "graph" ? object.name : object.type === "circle" ? object.name : undefined;
+    const name = objectName(object);
     const placement = placements.get(object.id);
     if (name && placement) context.fillText(name, placement.x, placement.y);
   });
@@ -1039,15 +1965,15 @@ function drawStructureLabels(
 function layoutCompactLabels(
   context: CanvasRenderingContext2D,
   document: GeometryDocument,
-  graphs: GraphSpec[],
   bodies: Map<string, Body>,
   paths: EdgePath[],
   labels: Map<string, string>,
   reservedPlacements: LabelPlacement[],
 ) {
   const preferredDirections = new Map<string, { x: number; y: number }>();
-  graphs.forEach((graph) => {
-    const nodes = graph.nodes
+  document.objects.forEach((object) => {
+    if (object.type === "circle") return;
+    const nodes = objectPointIds(object)
       .map((id) => bodies.get(id))
       .filter((body): body is Body => Boolean(body));
     if (!nodes.length) return;
@@ -1086,6 +2012,7 @@ function layoutCompactLabels(
       const end = bodies.get(constraint.b);
       return start && end ? [{ start, end }] : [];
     }
+    if (constraint.type !== "on") return [];
     const object = objects.get(constraint.object);
     if (object?.type !== "circle") return [];
     const start = bodies.get(object.center);
@@ -1308,11 +2235,13 @@ function drawConstraintLinks(
       a = bodies.get(constraint.a);
       b = bodies.get(constraint.b);
       label = String(constraint.value);
-    } else {
+    } else if (constraint.type === "on") {
       const object = objects.get(constraint.object);
       if (object?.type !== "circle") return;
       a = bodies.get(object.center);
       b = bodies.get(constraint.point);
+    } else {
+      return;
     }
 
     if (!a || !b) return;
@@ -1344,7 +2273,44 @@ function InfoTip({ label, children }: { label: string; children: string }) {
   );
 }
 
-function PhysicsControl({
+function SidebarSection({
+  title,
+  open,
+  onToggle,
+  action,
+  children,
+}: {
+  title: string;
+  open: boolean;
+  onToggle: () => void;
+  action?: ReactNode;
+  children: ReactNode;
+}) {
+  const contentId = useId();
+  return (
+    <section className={`sidebar-section${open ? " is-open" : " is-collapsed"}`}>
+      <div className="section-heading">
+        <button
+          type="button"
+          className="section-toggle"
+          aria-expanded={open}
+          aria-controls={contentId}
+          onClick={onToggle}
+        >
+          <span>{title}</span>
+        </button>
+        {open ? action : null}
+      </div>
+      {open ? (
+        <div id={contentId} className="section-content">
+          {children}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function RangeControl({
   label,
   help,
   value,
@@ -1393,8 +2359,11 @@ export default function App() {
     initialized: false,
     width: 0,
     height: 0,
+    screenWidth: 0,
+    screenHeight: 0,
   });
   const dragRef = useRef<DragState | null>(null);
+  const hoverPointerRef = useRef<CanvasPoint | null>(null);
   const [document, setDocument] = useState(allStructuresDocument);
   const [draft, setDraft] = useState(() => formatDocument(allStructuresDocument));
   const [error, setError] = useState("");
@@ -1404,7 +2373,9 @@ export default function App() {
   const [showVectors, setShowVectors] = useState(false);
   const [compactPoints, setCompactPoints] = useState(true);
   const [codeOpen, setCodeOpen] = useState(true);
+  const [viewOpen, setViewOpen] = useState(true);
   const [simulationOpen, setSimulationOpen] = useState(false);
+  const [zoomPercent, setZoomPercent] = useState(100);
 
   const physicsConstraints = useMemo(
     () => compilePhysicsConstraints(document),
@@ -1457,18 +2428,28 @@ export default function App() {
     if (!context) return;
 
     const world = worldRef.current;
+    const zoomScale = zoomPercent / 100;
+    const visualDocument: GeometryDocument = {
+      ...document,
+      objects: document.objects.map((object) =>
+        object.type === "circle"
+          ? { ...object, radius: object.radius * zoomScale }
+          : object),
+    };
     let animationFrame = 0;
     let previousTime = performance.now();
 
     const resize = () => {
       const bounds = panel.getBoundingClientRect();
-      const width = Math.max(320, bounds.width);
-      const height = Math.max(420, bounds.height);
+      const screenWidth = Math.max(320, bounds.width);
+      const screenHeight = Math.max(420, bounds.height);
+      const width = screenWidth / zoomScale;
+      const height = screenHeight / zoomScale;
       const dpr = Math.min(2, window.devicePixelRatio || 1);
-      canvas.width = Math.round(width * dpr);
-      canvas.height = Math.round(height * dpr);
-      canvas.style.width = `${width}px`;
-      canvas.style.height = `${height}px`;
+      canvas.width = Math.round(screenWidth * dpr);
+      canvas.height = Math.round(screenHeight * dpr);
+      canvas.style.width = `${screenWidth}px`;
+      canvas.style.height = `${screenHeight}px`;
       context.setTransform(dpr, 0, 0, dpr, 0, 0);
 
       if (!world.initialized) {
@@ -1486,6 +2467,8 @@ export default function App() {
         world.width = width;
         world.height = height;
       }
+      world.screenWidth = screenWidth;
+      world.screenHeight = screenHeight;
     };
 
     const observer = new ResizeObserver(resize);
@@ -1493,41 +2476,79 @@ export default function App() {
     resize();
 
     const draw = () => {
-      context.clearRect(0, 0, world.width, world.height);
+      const screenBodies = new Map(
+        [...world.bodies].map(([id, body]) => [id, {
+          ...body,
+          x: body.x * zoomScale,
+          y: body.y * zoomScale,
+        }]),
+      );
+      context.clearRect(0, 0, world.screenWidth, world.screenHeight);
       context.fillStyle = "#f7f6ef";
-      context.fillRect(0, 0, world.width, world.height);
-      drawGrid(context, world.width, world.height);
+      context.fillRect(0, 0, world.screenWidth, world.screenHeight);
+      drawGrid(context, world.screenWidth, world.screenHeight);
 
-      document.objects.forEach((object) => {
-        if (object.type === "graph") return;
+      visualDocument.objects.forEach((object) => {
+        if (object.type !== "circle") return;
         drawImplicitContour(
           context,
-          world.width,
-          world.height,
-          (x, y) => objectDistance(object, x, y, world.bodies),
+          world.screenWidth,
+          world.screenHeight,
+          (x, y) => objectDistance(object, x, y, screenBodies),
+          "#171814",
+          2,
         );
       });
-      const renderedEdgePaths = drawGraphObjects(
+      drawPrimitiveObjects(
+        context,
+        visualDocument,
+        screenBodies,
+        world.screenWidth,
+        world.screenHeight,
+        physics.extensionLength,
+      );
+      drawRelationMarkers(context, visualDocument, screenBodies);
+      const renderedGraphPaths = drawGraphObjects(
         context,
         graphObjects,
-        world.bodies,
+        screenBodies,
         physics.edgeRepulsion,
       );
+      const renderedEdgePaths = [
+        ...renderedGraphPaths,
+        ...primitiveEdgePaths(
+          visualDocument,
+          screenBodies,
+          world.screenWidth,
+          world.screenHeight,
+          physics.extensionLength,
+        ),
+      ];
+      const hoveredObjectId = hoverPointerRef.current
+        ? hoveredStructure(
+            visualDocument,
+            screenBodies,
+            hoverPointerRef.current,
+            world.screenWidth,
+            world.screenHeight,
+            physics.edgeRepulsion,
+            physics.extensionLength,
+          )
+        : undefined;
       const structureLabelPlacements = layoutStructureLabels(
         context,
-        document,
-        graphObjects,
-        world.bodies,
+        visualDocument,
+        screenBodies,
         renderedEdgePaths,
-        world.width,
-        world.height,
+        world.screenWidth,
+        world.screenHeight,
+        hoveredObjectId,
       );
       const compactLabelPlacements = compactPoints
         ? layoutCompactLabels(
             context,
-            document,
-            graphObjects,
-            world.bodies,
+            visualDocument,
+            screenBodies,
             renderedEdgePaths,
             pointLabels,
             [...structureLabelPlacements.values()],
@@ -1548,14 +2569,14 @@ export default function App() {
         );
         drawForceVectors(
           context,
-          world.bodies,
+          screenBodies,
           forceBreakdowns,
-          world.width,
+          world.screenWidth,
         );
       }
-      drawConstraintLinks(context, document, world.bodies);
-      drawStructureLabels(context, document, structureLabelPlacements);
-      world.bodies.forEach((body) => drawPoint(
+      drawConstraintLinks(context, visualDocument, screenBodies);
+      drawStructureLabels(context, visualDocument, structureLabelPlacements);
+      screenBodies.forEach((body) => drawPoint(
         context,
         body,
         pointLabels.get(body.id) ?? body.id,
@@ -1648,22 +2669,34 @@ export default function App() {
     physicsAttractions,
     physics.repulsion,
     physics.edgeRepulsion,
+    physics.extensionLength,
     physics.damping,
     pointLabels,
     showVectors,
     compactPoints,
+    zoomPercent,
     resetToken,
   ]);
 
-  const pointerPosition = (event: React.PointerEvent<HTMLCanvasElement>) => {
+  const screenPointerPosition = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const bounds = event.currentTarget.getBoundingClientRect();
     return { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
   };
 
+  const pointerPosition = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    const screen = screenPointerPosition(event);
+    const scale = zoomPercent / 100;
+    return {
+      x: screen.x / scale,
+      y: screen.y / scale,
+    };
+  };
+
   const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    hoverPointerRef.current = screenPointerPosition(event);
     const point = pointerPosition(event);
     let nearest: Body | undefined;
-    let nearestDistance = 30;
+    let nearestDistance = 30 / (zoomPercent / 100);
     worldRef.current.bodies.forEach((body) => {
       const distance = Math.hypot(point.x - body.x, point.y - body.y);
       if (distance <= nearestDistance) {
@@ -1683,6 +2716,7 @@ export default function App() {
   };
 
   const handlePointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    hoverPointerRef.current = screenPointerPosition(event);
     const drag = dragRef.current;
     if (!drag) return;
     const point = pointerPosition(event);
@@ -1700,8 +2734,9 @@ export default function App() {
         // final position so a fast release never drops the last part of a drag.
         body.x = point.x + drag.offsetX;
         body.y = point.y + drag.offsetY;
-        body.x = Math.max(26, Math.min(worldRef.current.width - 26, body.x));
-        body.y = Math.max(26, Math.min(worldRef.current.height - 26, body.y));
+        const margin = 26 / (zoomPercent / 100);
+        body.x = Math.max(margin, Math.min(worldRef.current.width - margin, body.x));
+        body.y = Math.max(margin, Math.min(worldRef.current.height - margin, body.y));
         solveConstraints(physicsConstraints, worldRef.current.bodies, drag.id);
         body.vx = 0;
         body.vy = 0;
@@ -1726,138 +2761,148 @@ export default function App() {
           <h1>ReMath</h1>
         </header>
 
-        <section className={`code-section${codeOpen ? "" : " is-collapsed"}`}>
-          <div className="section-heading">
-            <button
-              type="button"
-              className="section-toggle"
-              aria-expanded={codeOpen}
-              onClick={() => setCodeOpen((open) => !open)}
-            >
-              <span>Code</span>
-            </button>
-            {codeOpen ? (
-              <button type="button" className="text-button" onClick={formatDraft}>Format</button>
-            ) : null}
+        <SidebarSection
+          title="Code"
+          open={codeOpen}
+          onToggle={() => setCodeOpen((open) => !open)}
+          action={(
+            <button type="button" className="text-button" onClick={formatDraft}>Format</button>
+          )}
+        >
+          <div className="textarea-shell">
+            <textarea
+              aria-label="Geometry code"
+              spellCheck={false}
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+            />
           </div>
-          {codeOpen ? (
-            <>
-              <div className="textarea-shell">
-                <textarea
-                  aria-label="Geometry code"
-                  spellCheck={false}
-                  value={draft}
-                  onChange={(event) => setDraft(event.target.value)}
-                />
-              </div>
-              {error ? <p className="error-message">{error}</p> : null}
-              <button type="button" className="apply-button" onClick={applyDraft}>Apply</button>
-            </>
-          ) : null}
-        </section>
+          {error ? <p className="error-message">{error}</p> : null}
+          <button type="button" className="apply-button" onClick={applyDraft}>Apply</button>
+        </SidebarSection>
 
-        <section className="physics-section">
-          <div className="section-heading">
+        <SidebarSection
+          title="View"
+          open={viewOpen}
+          onToggle={() => setViewOpen((open) => !open)}
+        >
+          <div className="physics-controls">
+            <RangeControl
+              label="Zoom"
+              help="Scales the complete diagram around the center of the canvas without changing its geometry."
+              value={zoomPercent}
+              min={25}
+              max={200}
+              step={5}
+              display={`${zoomPercent}%`}
+              onChange={setZoomPercent}
+            />
+          </div>
+        </SidebarSection>
+
+        <SidebarSection
+          title="Simulation"
+          open={simulationOpen}
+          onToggle={() => setSimulationOpen((open) => !open)}
+          action={(
             <button
               type="button"
-              className="section-toggle"
-              aria-expanded={simulationOpen}
-              onClick={() => setSimulationOpen((open) => !open)}
+              className="text-button"
+              onClick={() => setPhysics(defaultPhysics)}
             >
-              <span>Simulation</span>
+              Defaults
             </button>
-            {simulationOpen ? (
-              <button
-                type="button"
-                className="text-button"
-                onClick={() => setPhysics(defaultPhysics)}
-              >
-                Defaults
-              </button>
-            ) : null}
+          )}
+        >
+          <div className="physics-controls">
+            <RangeControl
+              label="Edge pull"
+              help="How strongly connected nodes pull toward one another. Higher values tighten graphs faster."
+              value={physics.attraction}
+              min={0}
+              max={80}
+              step={1}
+              display={String(physics.attraction)}
+              onChange={(attraction) => setPhysics((current) => ({ ...current, attraction }))}
+            />
+            <RangeControl
+              label="Node repulsion"
+              help="How strongly nodes push apart. Higher values spread structures farther open."
+              value={physics.repulsion}
+              min={0}
+              max={500}
+              step={5}
+              display={String(physics.repulsion)}
+              onChange={(repulsion) => setPhysics((current) => ({ ...current, repulsion }))}
+            />
+            <RangeControl
+              label="Edge repulsion"
+              help="How far duplicate edges bow away from one another. At zero, duplicate edges overlap."
+              value={physics.edgeRepulsion}
+              min={0}
+              max={96}
+              step={1}
+              display={String(physics.edgeRepulsion)}
+              onChange={(edgeRepulsion) =>
+                setPhysics((current) => ({ ...current, edgeRepulsion }))}
+            />
+            <RangeControl
+              label="Open extension"
+              help="How far lines and rays continue while fading beyond their defining points or constrained intersections."
+              value={physics.extensionLength}
+              min={16}
+              max={180}
+              step={4}
+              display={`${physics.extensionLength}px`}
+              onChange={(extensionLength) =>
+                setPhysics((current) => ({ ...current, extensionLength }))}
+            />
+            <RangeControl
+              label="Damping"
+              help="How quickly motion loses energy. Higher values reduce drifting and settle sooner."
+              value={physics.damping}
+              min={0.5}
+              max={14}
+              step={0.1}
+              display={physics.damping.toFixed(1)}
+              onChange={(damping) => setPhysics((current) => ({ ...current, damping }))}
+            />
+            <div className="switch-toggle">
+              <span className="control-label">
+                Force vectors
+                <InfoTip label="Force vectors">
+                  Shows attraction, repulsion, and net-force arrows for every point.
+                </InfoTip>
+              </span>
+              <input
+                aria-label="Force vectors"
+                type="checkbox"
+                checked={showVectors}
+                onChange={(event) => setShowVectors(event.currentTarget.checked)}
+              />
+            </div>
+            <div className="switch-toggle">
+              <span className="control-label">
+                Compact points
+                <InfoTip label="Compact points">
+                  Switches between small dots with floating labels and large labeled circles.
+                </InfoTip>
+              </span>
+              <input
+                aria-label="Compact points"
+                type="checkbox"
+                checked={compactPoints}
+                onChange={(event) => setCompactPoints(event.currentTarget.checked)}
+              />
+            </div>
           </div>
-          {simulationOpen ? (
-            <>
-              <div className="physics-controls">
-                <PhysicsControl
-                  label="Edge pull"
-                  help="How strongly connected nodes pull toward one another. Higher values tighten graphs faster."
-                  value={physics.attraction}
-                  min={0}
-                  max={80}
-                  step={1}
-                  display={String(physics.attraction)}
-                  onChange={(attraction) => setPhysics((current) => ({ ...current, attraction }))}
-                />
-                <PhysicsControl
-                  label="Node repulsion"
-                  help="How strongly nodes push apart. Higher values spread structures farther open."
-                  value={physics.repulsion}
-                  min={0}
-                  max={500}
-                  step={5}
-                  display={String(physics.repulsion)}
-                  onChange={(repulsion) => setPhysics((current) => ({ ...current, repulsion }))}
-                />
-                <PhysicsControl
-                  label="Edge repulsion"
-                  help="How far duplicate edges bow away from one another. At zero, duplicate edges overlap."
-                  value={physics.edgeRepulsion}
-                  min={0}
-                  max={96}
-                  step={1}
-                  display={String(physics.edgeRepulsion)}
-                  onChange={(edgeRepulsion) =>
-                    setPhysics((current) => ({ ...current, edgeRepulsion }))}
-                />
-                <PhysicsControl
-                  label="Damping"
-                  help="How quickly motion loses energy. Higher values reduce drifting and settle sooner."
-                  value={physics.damping}
-                  min={0.5}
-                  max={14}
-                  step={0.1}
-                  display={physics.damping.toFixed(1)}
-                  onChange={(damping) => setPhysics((current) => ({ ...current, damping }))}
-                />
-                <div className="switch-toggle">
-                  <span className="control-label">
-                    Force vectors
-                    <InfoTip label="Force vectors">
-                      Shows attraction, repulsion, and net-force arrows for every point.
-                    </InfoTip>
-                  </span>
-                  <input
-                    aria-label="Force vectors"
-                    type="checkbox"
-                    checked={showVectors}
-                    onChange={(event) => setShowVectors(event.currentTarget.checked)}
-                  />
-                </div>
-                <div className="switch-toggle">
-                  <span className="control-label">
-                    Compact points
-                    <InfoTip label="Compact points">
-                      Switches between small dots with floating labels and large labeled circles.
-                    </InfoTip>
-                  </span>
-                  <input
-                    aria-label="Compact points"
-                    type="checkbox"
-                    checked={compactPoints}
-                    onChange={(event) => setCompactPoints(event.currentTarget.checked)}
-                  />
-                </div>
-              </div>
-              <div className="button-row">
-                <button type="button" onClick={() => setPaused((current) => !current)}>
-                  {paused ? "Resume" : "Pause"}
-                </button>
-                <button type="button" onClick={reset}>Reset</button>
-              </div>
-            </>
-          ) : null}
-        </section>
+          <div className="button-row">
+            <button type="button" onClick={() => setPaused((current) => !current)}>
+              {paused ? "Resume" : "Pause"}
+            </button>
+            <button type="button" onClick={reset}>Reset</button>
+          </div>
+        </SidebarSection>
       </aside>
 
       <section className="canvas-panel" ref={canvasPanelRef}>
@@ -1869,6 +2914,9 @@ export default function App() {
           onPointerUp={handlePointerEnd}
           onPointerCancel={handlePointerEnd}
           onLostPointerCapture={handlePointerEnd}
+          onPointerLeave={() => {
+            hoverPointerRef.current = null;
+          }}
         />
       </section>
     </main>
