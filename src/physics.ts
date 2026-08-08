@@ -53,6 +53,7 @@ const NUMERIC_GRADIENT_STEP = 0.01;
 const REPULSION_UNIT_SCALE = 100_000;
 const REPULSION_SOFTENING_SQUARED = 20 * 20;
 const EXTERNAL_STRUCTURE_REPULSION = 0.025;
+const SETTLE_SPEED = 4;
 
 function numericGradient(
   constraint: PhysicsConstraint,
@@ -316,6 +317,11 @@ export function integrate(
     body.vy *= freeDecay;
 
     const speed = Math.hypot(body.vx, body.vy);
+    if (speed < SETTLE_SPEED) {
+      body.vx = 0;
+      body.vy = 0;
+      return;
+    }
     if (speed > 1800) {
       body.vx = body.vx / speed * 1800;
       body.vy = body.vy / speed * 1800;

@@ -86,13 +86,15 @@ type DragState = {
 type PhysicsSettings = {
   attraction: number;
   repulsion: number;
+  edgeRepulsion: number;
   damping: number;
 };
 
 const defaultPhysics: PhysicsSettings = {
   attraction: 30,
   repulsion: 220,
-  damping: 6.3,
+  edgeRepulsion: 32,
+  damping: 9.5,
 };
 
 const circleDocument: GeometryDocument = {
@@ -762,79 +764,395 @@ function drawGrid(context: CanvasRenderingContext2D, width: number, height: numb
   context.restore();
 }
 
-function drawCircleLabels(
-  context: CanvasRenderingContext2D,
-  circles: CircleSpec[],
+type EdgePath = {
+  edge: GraphEdgeSpec;
+  source: Body;
+  target: Body;
+  control?: { x: number; y: number };
+};
+
+function graphEdgePaths(
+  graph: GraphSpec,
   bodies: Map<string, Body>,
-) {
-  context.save();
-  context.fillStyle = "#171814";
-  context.font = "600 10px 'DM Mono', monospace";
-  context.textAlign = "center";
-  context.textBaseline = "middle";
-  circles.forEach((circle) => {
-    if (!circle.name) return;
-    const center = bodies.get(circle.center);
-    if (!center) return;
-    context.fillText(circle.name, center.x, center.y - circle.radius - 16);
+  edgeRepulsion: number,
+): EdgePath[] {
+  const totals = new Map<string, number>();
+  graph.edges.forEach((edge) => {
+    const key = [edge.source, edge.target].sort().join("::");
+    totals.set(key, (totals.get(key) ?? 0) + 1);
   });
-  context.restore();
+  const seen = new Map<string, number>();
+
+  return graph.edges.flatMap((edge) => {
+    const source = bodies.get(edge.source);
+    const target = bodies.get(edge.target);
+    if (!source || !target) return [];
+    const key = [edge.source, edge.target].sort().join("::");
+    const index = seen.get(key) ?? 0;
+    seen.set(key, index + 1);
+    const count = totals.get(key) ?? 1;
+    if (count === 1 || edgeRepulsion === 0) return [{ edge, source, target }];
+
+    const dx = target.x - source.x;
+    const dy = target.y - source.y;
+    const length = Math.max(0.0001, Math.hypot(dx, dy));
+    const canonicalDirection = edge.source < edge.target ? 1 : -1;
+    const bend = (index - (count - 1) / 2) * edgeRepulsion * canonicalDirection;
+    return [{
+      edge,
+      source,
+      target,
+      control: {
+        x: (source.x + target.x) / 2 - dy / length * bend,
+        y: (source.y + target.y) / 2 + dx / length * bend,
+      },
+    }];
+  });
 }
 
 function drawGraphObjects(
   context: CanvasRenderingContext2D,
   graphs: GraphSpec[],
   bodies: Map<string, Body>,
+  edgeRepulsion: number,
 ) {
+  const renderedPaths: EdgePath[] = [];
   graphs.forEach((graph) => {
-    const totals = new Map<string, number>();
-    graph.edges.forEach((edge) => {
-      const key = [edge.source, edge.target].sort().join("::");
-      totals.set(key, (totals.get(key) ?? 0) + 1);
-    });
-    const seen = new Map<string, number>();
+    const paths = graphEdgePaths(graph, bodies, edgeRepulsion);
+    renderedPaths.push(...paths);
 
     context.save();
     context.strokeStyle = "#171814";
     context.lineWidth = 1.8;
     context.lineCap = "round";
-    graph.edges.forEach((edge) => {
-      const source = bodies.get(edge.source);
-      const target = bodies.get(edge.target);
-      if (!source || !target) return;
-      const key = [edge.source, edge.target].sort().join("::");
-      const index = seen.get(key) ?? 0;
-      seen.set(key, index + 1);
-      const count = totals.get(key) ?? 1;
-      const dx = target.x - source.x;
-      const dy = target.y - source.y;
-      const length = Math.max(0.0001, Math.hypot(dx, dy));
-      const offset = (index - (count - 1) / 2) * 8;
-      const offsetX = -dy / length * offset;
-      const offsetY = dx / length * offset;
-
-      context.setLineDash(edge.length === undefined ? [] : [7, 6]);
+    paths.forEach((path) => {
+      context.setLineDash(path.edge.length === undefined ? [] : [7, 6]);
       context.beginPath();
-      context.moveTo(source.x + offsetX, source.y + offsetY);
-      context.lineTo(target.x + offsetX, target.y + offsetY);
+      context.moveTo(path.source.x, path.source.y);
+      if (path.control) {
+        context.quadraticCurveTo(
+          path.control.x,
+          path.control.y,
+          path.target.x,
+          path.target.y,
+        );
+      } else {
+        context.lineTo(path.target.x, path.target.y);
+      }
       context.stroke();
     });
     context.restore();
 
+  });
+  return renderedPaths;
+}
+
+type LabelPlacement = {
+  x: number;
+  y: number;
+  halfWidth: number;
+  halfHeight: number;
+};
+
+function pointToSegmentDistance(
+  x: number,
+  y: number,
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+) {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const denominator = dx * dx + dy * dy;
+  const t = denominator === 0
+    ? 0
+    : Math.max(0, Math.min(1, ((x - start.x) * dx + (y - start.y) * dy) / denominator));
+  return Math.hypot(x - (start.x + dx * t), y - (start.y + dy * t));
+}
+
+function pointToEdgeDistance(x: number, y: number, path: EdgePath) {
+  if (!path.control) return pointToSegmentDistance(x, y, path.source, path.target);
+  let minimum = Number.POSITIVE_INFINITY;
+  let previous = { x: path.source.x, y: path.source.y };
+  for (let step = 1; step <= 12; step += 1) {
+    const t = step / 12;
+    const inverse = 1 - t;
+    const current = {
+      x: inverse * inverse * path.source.x
+        + 2 * inverse * t * path.control.x
+        + t * t * path.target.x,
+      y: inverse * inverse * path.source.y
+        + 2 * inverse * t * path.control.y
+        + t * t * path.target.y,
+    };
+    minimum = Math.min(minimum, pointToSegmentDistance(x, y, previous, current));
+    previous = current;
+  }
+  return minimum;
+}
+
+function pointToBoxDistance(
+  x: number,
+  y: number,
+  box: LabelPlacement,
+) {
+  const dx = Math.max(0, Math.abs(x - box.x) - box.halfWidth);
+  const dy = Math.max(0, Math.abs(y - box.y) - box.halfHeight);
+  return Math.hypot(dx, dy);
+}
+
+function edgeToBoxDistance(path: EdgePath, box: LabelPlacement) {
+  let minimum = Number.POSITIVE_INFINITY;
+  const steps = path.control ? 16 : 12;
+  for (let step = 0; step <= steps; step += 1) {
+    const t = step / steps;
+    const inverse = 1 - t;
+    const x = path.control
+      ? inverse * inverse * path.source.x
+        + 2 * inverse * t * path.control.x
+        + t * t * path.target.x
+      : path.source.x + (path.target.x - path.source.x) * t;
+    const y = path.control
+      ? inverse * inverse * path.source.y
+        + 2 * inverse * t * path.control.y
+        + t * t * path.target.y
+      : path.source.y + (path.target.y - path.source.y) * t;
+    minimum = Math.min(minimum, pointToBoxDistance(x, y, box));
+  }
+  return minimum;
+}
+
+function layoutStructureLabels(
+  context: CanvasRenderingContext2D,
+  document: GeometryDocument,
+  graphs: GraphSpec[],
+  bodies: Map<string, Body>,
+  paths: EdgePath[],
+  canvasWidth: number,
+  canvasHeight: number,
+) {
+  context.save();
+  context.font = "600 10px 'DM Mono', monospace";
+  const placements = new Map<string, LabelPlacement>();
+  const structures: Array<{
+    id: string;
+    name: string;
+    candidates: (halfWidth: number) => Array<{ x: number; y: number }>;
+  }> = [];
+
+  document.objects.forEach((object) => {
+    if (object.type !== "circle" || !object.name) return;
+    const center = bodies.get(object.center);
+    if (!center) return;
+    structures.push({
+      id: object.id,
+      name: object.name,
+      candidates: (halfWidth) => [
+        { x: center.x, y: center.y - object.radius - 16 },
+        { x: center.x, y: center.y + object.radius + 16 },
+        { x: center.x - object.radius - halfWidth - 12, y: center.y },
+        { x: center.x + object.radius + halfWidth + 12, y: center.y },
+      ],
+    });
+  });
+
+  graphs.forEach((graph) => {
+    const nodes = graph.nodes
+      .map((id) => bodies.get(id))
+      .filter((body): body is Body => Boolean(body));
+    if (!nodes.length) return;
+    const minX = Math.min(...nodes.map((body) => body.x));
+    const maxX = Math.max(...nodes.map((body) => body.x));
+    const minY = Math.min(...nodes.map((body) => body.y));
+    const maxY = Math.max(...nodes.map((body) => body.y));
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+    structures.push({
+      id: graph.id,
+      name: graph.name,
+      candidates: (halfWidth) => [
+        { x: centerX, y: minY - 27 },
+        { x: centerX, y: maxY + 27 },
+        { x: minX - halfWidth - 16, y: centerY },
+        { x: maxX + halfWidth + 16, y: centerY },
+      ],
+    });
+  });
+
+  structures.forEach((structure) => {
+    const width = Math.max(6, context.measureText(structure.name).width);
+    const halfWidth = width / 2;
+    const halfHeight = 5;
+    let best: (LabelPlacement & { score: number }) | undefined;
+    structure.candidates(halfWidth).forEach((candidate, candidateIndex) => {
+      const placement = { ...candidate, halfWidth, halfHeight };
+      let score = candidateIndex * 12;
+      if (placement.x - halfWidth < 8) score += (8 - placement.x + halfWidth) * 100;
+      if (placement.x + halfWidth > canvasWidth - 8) {
+        score += (placement.x + halfWidth - canvasWidth + 8) * 100;
+      }
+      if (placement.y - halfHeight < 8) score += (8 - placement.y + halfHeight) * 100;
+      if (placement.y + halfHeight > canvasHeight - 8) {
+        score += (placement.y + halfHeight - canvasHeight + 8) * 100;
+      }
+
+      bodies.forEach((body) => {
+        const overlapX = halfWidth + 8 - Math.abs(placement.x - body.x);
+        const overlapY = halfHeight + 8 - Math.abs(placement.y - body.y);
+        if (overlapX > 0 && overlapY > 0) score += overlapX * overlapY * 28;
+      });
+      paths.forEach((path) => {
+        const overlap = 4 - edgeToBoxDistance(path, placement);
+        if (overlap > 0) score += overlap * overlap * 40;
+      });
+      placements.forEach((other) => {
+        const overlapX = halfWidth + other.halfWidth + 6 - Math.abs(placement.x - other.x);
+        const overlapY = halfHeight + other.halfHeight + 6 - Math.abs(placement.y - other.y);
+        if (overlapX > 0 && overlapY > 0) score += overlapX * overlapY * 40;
+      });
+
+      if (!best || score < best.score) best = { ...placement, score };
+    });
+    if (best) placements.set(structure.id, best);
+  });
+  context.restore();
+  return placements;
+}
+
+function drawStructureLabels(
+  context: CanvasRenderingContext2D,
+  document: GeometryDocument,
+  placements: Map<string, LabelPlacement>,
+) {
+  context.save();
+  context.fillStyle = "#171814";
+  context.font = "600 10px 'DM Mono', monospace";
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  document.objects.forEach((object) => {
+    const name = object.type === "graph" ? object.name : object.type === "circle" ? object.name : undefined;
+    const placement = placements.get(object.id);
+    if (name && placement) context.fillText(name, placement.x, placement.y);
+  });
+  context.restore();
+}
+
+function layoutCompactLabels(
+  context: CanvasRenderingContext2D,
+  document: GeometryDocument,
+  graphs: GraphSpec[],
+  bodies: Map<string, Body>,
+  paths: EdgePath[],
+  labels: Map<string, string>,
+  reservedPlacements: LabelPlacement[],
+) {
+  const preferredDirections = new Map<string, { x: number; y: number }>();
+  graphs.forEach((graph) => {
     const nodes = graph.nodes
       .map((id) => bodies.get(id))
       .filter((body): body is Body => Boolean(body));
     if (!nodes.length) return;
     const centerX = nodes.reduce((sum, body) => sum + body.x, 0) / nodes.length;
-    const top = Math.min(...nodes.map((body) => body.y)) - 30;
-    context.save();
-    context.textAlign = "center";
-    context.textBaseline = "middle";
-    context.fillStyle = "#171814";
-    context.font = "600 10px 'DM Mono', monospace";
-    context.fillText(graph.name, centerX, top);
-    context.restore();
+    const centerY = nodes.reduce((sum, body) => sum + body.y, 0) / nodes.length;
+    nodes.forEach((body) => {
+      const dx = body.x - centerX;
+      const dy = body.y - centerY;
+      const length = Math.hypot(dx, dy);
+      preferredDirections.set(
+        body.id,
+        length < 0.001 ? { x: 0, y: -1 } : { x: dx / length, y: dy / length },
+      );
+    });
   });
+
+  const objects = new Map(document.objects.map((object) => [object.id, object]));
+  document.constraints.forEach((constraint) => {
+    if (constraint.type !== "on") return;
+    const object = objects.get(constraint.object);
+    if (object?.type !== "circle") return;
+    const point = bodies.get(constraint.point);
+    const center = bodies.get(object.center);
+    if (!point || !center) return;
+    const dx = point.x - center.x;
+    const dy = point.y - center.y;
+    const length = Math.hypot(dx, dy);
+    if (length > 0.001) {
+      preferredDirections.set(point.id, { x: dx / length, y: dy / length });
+    }
+  });
+
+  const constraintSegments = document.constraints.flatMap((constraint) => {
+    if (constraint.type === "distance") {
+      const start = bodies.get(constraint.a);
+      const end = bodies.get(constraint.b);
+      return start && end ? [{ start, end }] : [];
+    }
+    const object = objects.get(constraint.object);
+    if (object?.type !== "circle") return [];
+    const start = bodies.get(object.center);
+    const end = bodies.get(constraint.point);
+    return start && end ? [{ start, end }] : [];
+  });
+
+  context.save();
+  context.font = "600 10px 'DM Mono', monospace";
+  const placements = new Map<string, LabelPlacement>();
+  const occupied = [...reservedPlacements];
+  document.points.forEach((point) => {
+    const body = bodies.get(point.id);
+    if (!body) return;
+    const label = labels.get(point.id) ?? point.id;
+    const width = Math.max(6, context.measureText(label).width);
+    const halfWidth = width / 2;
+    const halfHeight = 5;
+    const radius = Math.hypot(halfWidth, halfHeight);
+    const preferred = preferredDirections.get(point.id) ?? { x: 0, y: -1 };
+    const candidateDirections = [
+      preferred,
+      ...Array.from({ length: 16 }, (_, index) => {
+        const angle = index / 16 * Math.PI * 2;
+        return { x: Math.cos(angle), y: Math.sin(angle) };
+      }),
+    ];
+    let best = {
+      x: body.x,
+      y: body.y - 14,
+      halfWidth,
+      halfHeight,
+      score: Number.POSITIVE_INFINITY,
+    };
+
+    candidateDirections.forEach((direction) => {
+      const anchorDistance = 11 + Math.min(7, width / 2);
+      const x = body.x + direction.x * anchorDistance;
+      const y = body.y + direction.y * anchorDistance;
+      let score = (1 - (direction.x * preferred.x + direction.y * preferred.y)) * 18;
+
+      bodies.forEach((other) => {
+        const overlapX = halfWidth + 7 - Math.abs(x - other.x);
+        const overlapY = halfHeight + 7 - Math.abs(y - other.y);
+        if (overlapX > 0 && overlapY > 0) score += overlapX * overlapY * 24;
+      });
+      paths.forEach((path) => {
+        const overlap = radius + 3 - pointToEdgeDistance(x, y, path);
+        if (overlap > 0) score += overlap * overlap * 18;
+      });
+      constraintSegments.forEach(({ start, end }) => {
+        const overlap = radius + 3 - pointToSegmentDistance(x, y, start, end);
+        if (overlap > 0) score += overlap * overlap * 18;
+      });
+      occupied.forEach((placement) => {
+        const overlapX = halfWidth + placement.halfWidth + 3 - Math.abs(x - placement.x);
+        const overlapY = halfHeight + placement.halfHeight + 3 - Math.abs(y - placement.y);
+        if (overlapX > 0 && overlapY > 0) score += overlapX * overlapY * 30;
+      });
+
+      if (score < best.score) best = { x, y, halfWidth, halfHeight, score };
+    });
+    placements.set(point.id, best);
+    occupied.push(best);
+  });
+  context.restore();
+  return placements;
 }
 
 function drawArrow(
@@ -919,7 +1237,31 @@ function drawForceVectors(
   context.restore();
 }
 
-function drawPoint(context: CanvasRenderingContext2D, body: Body, label: string) {
+function drawPoint(
+  context: CanvasRenderingContext2D,
+  body: Body,
+  label: string,
+  compact: boolean,
+  labelPlacement?: LabelPlacement,
+) {
+  if (compact) {
+    context.save();
+    context.fillStyle = "#171814";
+    context.beginPath();
+    context.arc(body.x, body.y, 4, 0, Math.PI * 2);
+    context.fill();
+    context.font = "600 10px 'DM Mono', monospace";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(
+      label,
+      labelPlacement?.x ?? body.x,
+      labelPlacement?.y ?? body.y - 14,
+    );
+    context.restore();
+    return;
+  }
+
   context.save();
   context.shadowColor = "rgba(23, 24, 20, 0.16)";
   context.shadowBlur = 10;
@@ -1036,6 +1378,7 @@ export default function App() {
   const [resetToken, setResetToken] = useState(0);
   const [physics, setPhysics] = useState(defaultPhysics);
   const [showVectors, setShowVectors] = useState(false);
+  const [compactPoints, setCompactPoints] = useState(true);
   const [codeOpen, setCodeOpen] = useState(true);
   const [simulationOpen, setSimulationOpen] = useState(false);
 
@@ -1140,12 +1483,32 @@ export default function App() {
           (x, y) => objectDistance(object, x, y, world.bodies),
         );
       });
-      drawCircleLabels(
+      const renderedEdgePaths = drawGraphObjects(
         context,
-        document.objects.filter((object): object is CircleSpec => object.type === "circle"),
+        graphObjects,
         world.bodies,
+        physics.edgeRepulsion,
       );
-      drawGraphObjects(context, graphObjects, world.bodies);
+      const structureLabelPlacements = layoutStructureLabels(
+        context,
+        document,
+        graphObjects,
+        world.bodies,
+        renderedEdgePaths,
+        world.width,
+        world.height,
+      );
+      const compactLabelPlacements = compactPoints
+        ? layoutCompactLabels(
+            context,
+            document,
+            graphObjects,
+            world.bodies,
+            renderedEdgePaths,
+            pointLabels,
+            [...structureLabelPlacements.values()],
+          )
+        : undefined;
       if (showVectors) {
         const forceComponents = connectedComponents(
           physicsConstraints,
@@ -1167,10 +1530,13 @@ export default function App() {
         );
       }
       drawConstraintLinks(context, document, world.bodies);
+      drawStructureLabels(context, document, structureLabelPlacements);
       world.bodies.forEach((body) => drawPoint(
         context,
         body,
         pointLabels.get(body.id) ?? body.id,
+        compactPoints,
+        compactLabelPlacements?.get(body.id),
       ));
     };
 
@@ -1257,9 +1623,11 @@ export default function App() {
     physicsRepulsors,
     physicsAttractions,
     physics.repulsion,
+    physics.edgeRepulsion,
     physics.damping,
     pointLabels,
     showVectors,
+    compactPoints,
     resetToken,
   ]);
 
@@ -1406,6 +1774,16 @@ export default function App() {
                   onChange={(repulsion) => setPhysics((current) => ({ ...current, repulsion }))}
                 />
                 <PhysicsControl
+                  label="Edge repulsion"
+                  value={physics.edgeRepulsion}
+                  min={0}
+                  max={96}
+                  step={1}
+                  display={String(physics.edgeRepulsion)}
+                  onChange={(edgeRepulsion) =>
+                    setPhysics((current) => ({ ...current, edgeRepulsion }))}
+                />
+                <PhysicsControl
                   label="Damping"
                   value={physics.damping}
                   min={0.5}
@@ -1414,13 +1792,22 @@ export default function App() {
                   display={physics.damping.toFixed(1)}
                   onChange={(damping) => setPhysics((current) => ({ ...current, damping }))}
                 />
-                <label className="vector-toggle">
+                <label className="switch-toggle">
                   <span>Force vectors</span>
                   <input
                     aria-label="Force vectors"
                     type="checkbox"
                     checked={showVectors}
                     onChange={(event) => setShowVectors(event.currentTarget.checked)}
+                  />
+                </label>
+                <label className="switch-toggle">
+                  <span>Compact points</span>
+                  <input
+                    aria-label="Compact points"
+                    type="checkbox"
+                    checked={compactPoints}
+                    onChange={(event) => setCompactPoints(event.currentTarget.checked)}
                   />
                 </label>
               </div>
