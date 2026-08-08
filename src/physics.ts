@@ -9,7 +9,6 @@ export type Body = {
   y: number;
   vx: number;
   vy: number;
-  fixed: boolean;
 };
 
 export type PhysicsConstraint = {
@@ -95,16 +94,15 @@ export function solveConstraints(
       const particles = constraint.particleIds
         .map((id) => bodies.get(id))
         .filter((body): body is Body => Boolean(body));
-      const draggedHasMovablePartner = draggedId !== null && particles.some(
-        (body) => !body.fixed && body.id !== draggedId,
+      const draggedHasPartner = draggedId !== null && particles.some(
+        (body) => body.id !== draggedId,
       );
       const correctionWeight = (body: Body) =>
-        body.id === draggedId && draggedHasMovablePartner ? 0 : 1;
+        body.id === draggedId && draggedHasPartner ? 0 : 1;
       const gradients = new Map<string, Vector>();
       let denominator = 0;
 
       particles.forEach((body) => {
-        if (body.fixed) return;
         const gradient = constraint.gradient
           ? constraint.gradient(bodies, body.id)
           : numericGradient(constraint, bodies, body.id);
@@ -117,7 +115,6 @@ export function solveConstraints(
       const stiffness = Math.max(0, Math.min(1, constraint.stiffness ?? 1));
       const scale = error / denominator * stiffness;
       particles.forEach((body) => {
-        if (body.fixed) return;
         const gradient = gradients.get(body.id);
         if (!gradient) return;
         const weight = correctionWeight(body);
@@ -260,14 +257,14 @@ export function calculateForces(
   }
 
   components.forEach((component, componentIndex) => {
-    const movableBodies = [...component]
+    const componentBodies = [...component]
       .map((id) => bodies.get(id))
-      .filter((body): body is Body => body !== undefined && !body.fixed);
-    if (!movableBodies.length) return;
+      .filter((body): body is Body => body !== undefined);
+    if (!componentBodies.length) return;
     const force = externalForces[componentIndex];
-    const forceX = force.x / movableBodies.length;
-    const forceY = force.y / movableBodies.length;
-    movableBodies.forEach((body) => {
+    const forceX = force.x / componentBodies.length;
+    const forceY = force.y / componentBodies.length;
+    componentBodies.forEach((body) => {
       const bodyForce = forces.get(body.id);
       if (!bodyForce) return;
       bodyForce.repulsion.x += forceX;
@@ -302,12 +299,6 @@ export function integrate(
 
   bodies.forEach((body) => {
     previous.set(body.id, { x: body.x, y: body.y });
-    if (body.fixed) {
-      body.vx = 0;
-      body.vy = 0;
-      return;
-    }
-
     const force = forces.get(body.id);
     if (force) {
       body.vx += force.net.x * deltaSeconds;
@@ -343,7 +334,6 @@ export function reconcileVelocities(
 ) {
   if (deltaSeconds <= 0) return;
   bodies.forEach((body) => {
-    if (body.fixed) return;
     const oldPosition = previous.get(body.id);
     if (!oldPosition) return;
     body.vx = (body.x - oldPosition.x) / deltaSeconds;

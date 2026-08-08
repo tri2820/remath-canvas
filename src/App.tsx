@@ -15,7 +15,6 @@ import {
 type PointSpec = {
   id: string;
   label?: string;
-  fixed?: boolean;
 };
 
 type CircleSpec = {
@@ -255,8 +254,7 @@ function parseDocument(source: string): GeometryDocument {
     }
     return {
       id: point.id,
-      label: typeof point.label === "string" ? point.label : undefined,
-      fixed: point.fixed === true,
+      ...(typeof point.label === "string" ? { label: point.label } : {}),
     };
   });
 
@@ -393,7 +391,6 @@ function resetWorld(world: World, document: GeometryDocument) {
       y,
       vx: 0,
       vy: 0,
-      fixed: point.fixed === true,
     });
     placed.add(point.id);
   };
@@ -655,7 +652,7 @@ function containStructures(
     if (!correctionX && !correctionY) return;
     component.forEach((id) => {
       const body = bodies.get(id);
-      if (!body || body.fixed) return;
+      if (!body) return;
       body.x += correctionX;
       body.y += correctionY;
       corrections.set(id, { x: correctionX, y: correctionY });
@@ -689,7 +686,7 @@ function repelStructuresFromWalls(
       - wallStrength / (bottom * bottom + softeningSquared);
     component.forEach((id) => {
       const body = bodies.get(id);
-      if (!body || body.fixed) return;
+      if (!body) return;
       body.vx += forceX * deltaSeconds;
       body.vy += forceY * deltaSeconds;
     });
@@ -1282,7 +1279,7 @@ export default function App() {
         nearestDistance = distance;
       }
     });
-    if (!nearest || nearest.fixed) return;
+    if (!nearest) return;
     dragRef.current = {
       id: nearest.id,
       x: point.x,
